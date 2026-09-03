@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -53,6 +54,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.donfluids.music.AnalyzerViewModel
 import com.donfluids.music.R
+import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
 import com.donfluids.music.music.Key
 import com.donfluids.music.music.Notes
@@ -108,6 +110,7 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel) {
             state.error?.let {
                 Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
             }
+            PresetRow(state.preset, viewModel::setPreset)
             KeyCard(state.analysis, state.listening)
             TempoCard(state.analysis, state.listening, state.tempoMultiplier, frameNanos, viewModel::cycleTempoMultiplier)
             MeterCard(state.analysis, state.listening)
@@ -137,6 +140,26 @@ private fun Header(listening: Boolean, level: Float, onStart: () -> Unit, onStop
             progress = { if (listening) level else 0f },
             modifier = Modifier.fillMaxWidth().height(4.dp),
             color = MaterialTheme.colorScheme.secondary,
+        )
+    }
+}
+
+@Composable
+private fun PresetRow(selected: AnalysisPreset, onSelect: (AnalysisPreset) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnalysisPreset.ALL.forEach { preset ->
+                FilterChip(
+                    selected = preset == selected,
+                    onClick = { onSelect(preset) },
+                    label = { Text(preset.title) },
+                )
+            }
+        }
+        Text(
+            selected.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

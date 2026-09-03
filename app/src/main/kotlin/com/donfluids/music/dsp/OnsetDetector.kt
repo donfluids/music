@@ -15,6 +15,9 @@ class OnsetDetector(
     maxHz: Double = 8000.0,
     /** Log-compression strength. Scale-free-ish thanks to downstream normalisation. */
     private val gamma: Float = 20f,
+    /** Onsets below this frequency get [lowBandWeight] extra weight (kick, bass). 0 disables. */
+    lowBandMaxHz: Double = 0.0,
+    private val lowBandWeight: Float = 0f,
 ) {
     private val fft = Fft(fftSize)
     private val window = Fft.hannWindow(fftSize)
@@ -25,6 +28,7 @@ class OnsetDetector(
     private val binHz = sampleRate.toDouble() / fftSize
     private val minBin = (minHz / binHz).toInt().coerceAtLeast(1)
     private val maxBin = (maxHz / binHz).toInt().coerceAtMost(fftSize / 2)
+    private val lowBandMaxBin = if (lowBandMaxHz > 0) (lowBandMaxHz / binHz).toInt().coerceIn(minBin, maxBin) else minBin - 1
     private var hasPrevious = false
 
     fun reset() {
@@ -45,7 +49,7 @@ class OnsetDetector(
             val m = ln1p(gamma * sqrt(re[k] * re[k] + im[k] * im[k]) * scale)
             current[k] = m
             val d = m - previous[k]
-            if (d > 0f) flux += d
+            if (d > 0f) flux += if (k <= lowBandMaxBin) d * (1f + lowBandWeight) else d
         }
         val result = if (hasPrevious) flux else 0f
         System.arraycopy(current, minBin, previous, minBin, maxBin - minBin + 1)

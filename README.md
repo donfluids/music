@@ -24,6 +24,20 @@ Everything runs on the phone; no audio leaves the device.
 
 The screen stays on while listening.
 
+### Presets
+
+Pick the preset that matches what the phone is hearing. The pipeline is the same; the
+presets change which frequencies count and how patient the estimates are.
+
+| Preset | Use when | What changes |
+| --- | --- | --- |
+| **Band** | Drums, guitar, keys and voices, e.g. a monitor mix | Onsets below 250 Hz (kick, bass) get extra weight so the drums set the beat. |
+| **Guitar** | Guitar-led, no drums | Softer log compression keeps strum accents; the key finder ignores string overtones above 800 Hz. |
+| **Voices** | Mostly singing | Only 150 Hz to 5 kHz counts as an onset (syllables), the key memory is longer, and the meter waits for more beats before deciding. |
+
+The choice is remembered between launches. Switching presets while listening starts the
+analysis over.
+
 ## How it works
 
 All signal processing is plain Kotlin under `app/src/main/kotlin/com/donfluids/music/dsp`

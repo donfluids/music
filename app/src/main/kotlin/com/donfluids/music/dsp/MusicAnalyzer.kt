@@ -40,13 +40,31 @@ data class AnalysisResult(
  */
 class MusicAnalyzer(
     val sampleRate: Int,
+    val preset: AnalysisPreset = AnalysisPreset.BAND,
     val hopSize: Int = 512,
 ) {
-    private val chromaExtractor = ChromaExtractor(sampleRate)
-    private val onsetDetector = OnsetDetector(sampleRate)
+    private val chromaExtractor = ChromaExtractor(
+        sampleRate,
+        memorySeconds = preset.keyMemorySeconds,
+        minHz = preset.chromaMinHz,
+        maxHz = preset.chromaMaxHz,
+        rollOffHz = preset.chromaRollOffHz,
+    )
+    private val onsetDetector = OnsetDetector(
+        sampleRate,
+        minHz = preset.onsetMinHz,
+        maxHz = preset.onsetMaxHz,
+        gamma = preset.onsetGamma,
+        lowBandMaxHz = preset.onsetLowBandMaxHz,
+        lowBandWeight = preset.onsetLowBandWeight,
+    )
     private val framesPerSecond = sampleRate.toDouble() / hopSize
-    private val tempoTracker = TempoTracker(framesPerSecond)
-    private val meterDetector = MeterDetector()
+    private val tempoTracker = TempoTracker(
+        framesPerSecond,
+        priorCenterBpm = preset.tempoPriorCenterBpm,
+        priorWidthOctaves = preset.tempoPriorWidthOctaves,
+    )
+    private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
 
     private val windowSize = chromaExtractor.fftSize
     private val window = FloatArray(windowSize)

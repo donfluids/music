@@ -28,6 +28,8 @@ class ChromaExtractor(
     private val memorySeconds: Double = 8.0,
     private val minHz: Double = 55.0,
     private val maxHz: Double = 3000.0,
+    /** Peaks above this frequency are weighted down in proportion, to tame high overtones. */
+    private val rollOffHz: Double = 1000.0,
 ) {
     private val fft = Fft(fftSize)
     private val window = Fft.hannWindow(fftSize)
@@ -116,7 +118,7 @@ class ChromaExtractor(
             val pc = Math.floorMod(nearest + 9, 12) // A -> 9, so C -> 0
 
             // De-emphasise the upper spectrum: high harmonics (5th, 7th ...) blur the key.
-            val weight = if (hz <= 1000.0) m.toDouble() else m.toDouble() * (1000.0 / hz)
+            val weight = if (hz <= rollOffHz) m.toDouble() else m.toDouble() * (rollOffHz / hz)
             frameChroma[pc] += weight.toFloat()
             frameWeight += weight
             val angle = cents / 100.0 * 2.0 * Math.PI
