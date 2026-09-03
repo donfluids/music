@@ -13,3 +13,6 @@ captures/
 
 # OS
 .DS_Store
+keystore.properties
+*.jks
+*.keystore
