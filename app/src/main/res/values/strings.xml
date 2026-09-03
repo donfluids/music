@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LiveKey</string>
+    <string name="start_listening">Start listening</string>
+    <string name="stop_listening">Stop</string>
+    <string name="reset">New song</string>
+    <string name="permission_needed">LiveKey needs the microphone to hear the singing. Grant the permission to continue.</string>
+    <string name="permission_denied">Microphone permission was denied. Enable it in system settings for LiveKey.</string>
+    <string name="key_heading">Key</string>
+    <string name="tempo_heading">Tempo</string>
+    <string name="meter_heading">Time signature</string>
+    <string name="listening_placeholder">Listening…</string>
+    <string name="idle_placeholder">Tap Start and let the song play for a few bars.</string>
+</resources>
