@@ -38,6 +38,28 @@ presets change which frequencies count and how patient the estimates are.
 The choice is remembered between launches. Switching presets while listening starts the
 analysis over.
 
+### Recording clips for tuning
+
+The bottom card records clips so the presets can be tuned to your room.
+
+1. While listening, tap **Record clip**. It stops by itself after 60 seconds, or earlier
+   when you tap **Stop clip**.
+2. A dialog asks what the song really was: key, tempo, time signature and any notes.
+   Fill in what you know; the rest can stay blank.
+3. Tap **Share** to send every clip as one zip (each clip is a WAV file plus a JSON
+   sidecar with the preset, the app's decisions over time, and your labels).
+
+Clips stay on the phone under `Android/data/com.donfluids.music/files/clips` until you
+tap **Delete all**. Nothing is uploaded unless you share it.
+
+To replay clips through the analyser on a computer, unzip them and run:
+
+```
+./gradlew :app:testDebugUnitTest --tests '*ClipReplayTest*' -Dclips.dir=/path/to/clips -i
+```
+
+It prints, for every clip and every preset, what the app decided next to your labels.
+
 ## How it works
 
 All signal processing is plain Kotlin under `app/src/main/kotlin/com/donfluids/music/dsp`

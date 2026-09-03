@@ -11,4 +11,21 @@
     <string name="meter_heading">Time signature</string>
     <string name="listening_placeholder">Listening…</string>
     <string name="idle_placeholder">Tap Start and let the song play for a few bars.</string>
+    <string name="clips_heading">Clips for tuning</string>
+    <string name="record_clip">Record clip</string>
+    <string name="stop_clip">Stop clip</string>
+    <string name="share_clips">Share</string>
+    <string name="delete_clips">Delete all</string>
+    <string name="clips_hint">Record 30 to 60 seconds of a song, then note what it really was. Share the clips to have the presets tuned to your room.</string>
+    <string name="label_title">What was it really?</string>
+    <string name="label_key">Key (e.g. G major)</string>
+    <string name="label_tempo">Tempo in BPM</string>
+    <string name="label_meter">Time signature (e.g. 4/4)</string>
+    <string name="label_notes">Notes (song, who was playing)</string>
+    <string name="label_save">Save</string>
+    <string name="label_skip">Skip</string>
+    <string name="delete_confirm_title">Delete all clips?</string>
+    <string name="delete_confirm_text">This removes every recorded clip and its notes from the phone.</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete">Delete</string>
 </resources>

@@ -1,6 +1,7 @@
 package com.donfluids.music.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,6 +31,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -51,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.donfluids.music.AnalyzerViewModel
 import com.donfluids.music.R
@@ -114,9 +120,108 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel) {
             KeyCard(state.analysis, state.listening)
             TempoCard(state.analysis, state.listening, state.tempoMultiplier, frameNanos, viewModel::cycleTempoMultiplier)
             MeterCard(state.analysis, state.listening)
+            ClipsCard(
+                listening = state.listening,
+                recording = state.recording,
+                recordingSeconds = state.recordingSeconds,
+                clipCount = state.clipCount,
+                onStart = viewModel::startClip,
+                onStop = viewModel::stopClip,
+                onShare = viewModel::shareClips,
+                onDelete = viewModel::deleteClips,
+            )
             Spacer(Modifier.height(24.dp))
         }
     }
+
+    state.clipAwaitingLabels?.let {
+        LabelDialog(onSave = viewModel::saveLabels, onSkip = viewModel::skipLabels)
+    }
+
+    // Hand a freshly zipped set of clips to the share sheet, then forget it.
+    LaunchedEffect(state.shareFile) {
+        val file = state.shareFile ?: return@LaunchedEffect
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("application/zip")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .putExtra(Intent.EXTRA_SUBJECT, "LiveKey clips")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(Intent.createChooser(send, "Share clips"))
+        viewModel.shareConsumed()
+    }
+}
+
+@Composable
+private fun ClipsCard(
+    listening: Boolean,
+    recording: Boolean,
+    recordingSeconds: Int,
+    clipCount: Int,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var confirmDelete by remember { mutableStateOf(false) }
+    SectionCard(stringResource(R.string.clips_heading)) {
+        Text(
+            stringResource(R.string.clips_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (recording) {
+                Button(
+                    onClick = onStop,
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                ) { Text(stringResource(R.string.stop_clip) + "  ${recordingSeconds}s") }
+            } else {
+                Button(onClick = onStart, enabled = listening) { Text(stringResource(R.string.record_clip)) }
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                "$clipCount saved",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onShare, enabled = clipCount > 0 && !recording) { Text(stringResource(R.string.share_clips)) }
+            OutlinedButton(onClick = { confirmDelete = true }, enabled = clipCount > 0 && !recording) { Text(stringResource(R.string.delete_clips)) }
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(stringResource(R.string.delete_confirm_title)) },
+            text = { Text(stringResource(R.string.delete_confirm_text)) },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text(stringResource(R.string.delete)) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+}
+
+@Composable
+private fun LabelDialog(onSave: (String, String, String, String) -> Unit, onSkip: () -> Unit) {
+    var key by remember { mutableStateOf("") }
+    var tempo by remember { mutableStateOf("") }
+    var meter by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text(stringResource(R.string.label_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = key, onValueChange = { key = it }, label = { Text(stringResource(R.string.label_key)) }, singleLine = true)
+                OutlinedTextField(value = tempo, onValueChange = { tempo = it }, label = { Text(stringResource(R.string.label_tempo)) }, singleLine = true)
+                OutlinedTextField(value = meter, onValueChange = { meter = it }, label = { Text(stringResource(R.string.label_meter)) }, singleLine = true)
+                OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text(stringResource(R.string.label_notes)) })
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(key, tempo, meter, notes) }) { Text(stringResource(R.string.label_save)) } },
+        dismissButton = { TextButton(onClick = onSkip) { Text(stringResource(R.string.label_skip)) } },
+    )
 }
 
 @Composable
