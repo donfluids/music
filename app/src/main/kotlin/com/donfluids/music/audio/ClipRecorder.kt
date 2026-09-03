@@ -63,7 +63,8 @@ class ClipRecorder(
                 .put("keyConfidence", round(result.keyConfidence))
                 .put("bpm", result.bpm?.let { round(it) })
                 .put("meter", result.meterLabel)
-                .put("meterConfidence", round(result.meterConfidence)),
+                .put("meterConfidence", round(result.meterConfidence))
+                .put("chord", result.currentChord?.toString()),
         )
     }
 
@@ -88,7 +89,17 @@ class ClipRecorder(
                     .put("bpm", finalResult.bpm?.let { round(it) })
                     .put("tempoStrength", round(finalResult.tempoStrength))
                     .put("meter", finalResult.meterLabel)
-                    .put("meterConfidence", round(finalResult.meterConfidence)),
+                    .put("meterConfidence", round(finalResult.meterConfidence))
+                    .put("songKey", finalResult.songKey?.label)
+                    .put("songKeyConfidence", round(finalResult.songKeyConfidence)),
+            )
+            .put(
+                "chords",
+                JSONArray().also { arr ->
+                    finalResult.chordSegments.forEach { seg ->
+                        arr.put(JSONObject().put("chord", seg.chord?.toString()).put("start", round(seg.startSeconds)).put("end", round(seg.endSeconds)))
+                    }
+                },
             )
             .put("timeline", timeline)
             .put("labels", JSONObject())

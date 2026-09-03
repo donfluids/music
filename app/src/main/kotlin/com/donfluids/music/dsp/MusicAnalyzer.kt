@@ -1,5 +1,7 @@
 package com.donfluids.music.dsp
 
+import com.donfluids.music.music.ChordLabel
+import com.donfluids.music.music.ChordSegment
 import com.donfluids.music.music.Key
 import kotlin.math.log10
 import kotlin.math.roundToInt
@@ -32,6 +34,17 @@ data class AnalysisResult(
     /** Bar position (0 = downbeat) of the beat at [lastBeatAtNanos]. */
     val lastBeatIndexInBar: Int = 0,
     val meterScores: Map<Int, Float> = emptyMap(),
+    /** The triad sounding right now, if any. */
+    val currentChord: ChordLabel? = null,
+    /** Chords heard since the song started (or the last reset), oldest first, no-chord gaps removed. */
+    val chordSegments: List<ChordSegment> = emptyList(),
+    /** Share of chord time per chord, largest first. */
+    val chordShares: List<Pair<ChordLabel, Float>> = emptyList(),
+    /** Key suggested from the whole chord sequence, with its confidence and runner-up. */
+    val songKey: Key? = null,
+    val songKeyConfidence: Float = 0f,
+    val songKeyCadences: Int = 0,
+    val songKeyAlternative: Key? = null,
 )
 
 /**
@@ -65,6 +78,7 @@ class MusicAnalyzer(
         priorWidthOctaves = preset.tempoPriorWidthOctaves,
     )
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
+    private val chordDetector = ChordDetector()
 
     private val windowSize = chromaExtractor.fftSize
     private val window = FloatArray(windowSize)
@@ -90,6 +104,16 @@ class MusicAnalyzer(
 
     private var tempoAbsentRuns = 0
 
+    // Song mode: the chord sequence since the last reset.
+    private val segments = ArrayList<ChordSegment>()
+    private var openChord: ChordLabel? = null
+    private var openStart = 0f
+    private var songKey: Key? = null
+    private var songKeyConfidence = 0f
+    private var songKeyCadences = 0
+    private var songKeyAlternative: Key? = null
+    private var chordShares: List<Pair<ChordLabel, Float>> = emptyList()
+
     private var levelRms = 0.0
     private var levelSamples = 0
 
@@ -111,6 +135,15 @@ class MusicAnalyzer(
         meterCandidateHits = 0
         shownMeter = null
         tempoAbsentRuns = 0
+        chordDetector.reset()
+        segments.clear()
+        openChord = null
+        openStart = 0f
+        songKey = null
+        songKeyConfidence = 0f
+        songKeyCadences = 0
+        songKeyAlternative = null
+        chordShares = emptyList()
         result = AnalysisResult()
     }
 
@@ -152,10 +185,12 @@ class MusicAnalyzer(
         if (hopIndex % chromaEveryHops == 0L) {
             chromaExtractor.process(window, 0, hopSeconds * chromaEveryHops)
             updateKey()
+            updateChords()
             changed = true
         }
         if (hopIndex % rhythmEveryHops == 0L) {
             updateRhythm()
+            updateSongKey()
             changed = true
         }
         if (changed) publish()
@@ -183,6 +218,53 @@ class MusicAnalyzer(
         else ranked.first { it.key == shown }.correlation.toFloat().coerceIn(0f, 1f) * 0.5f
         pendingAlternatives = ranked.filter { it.key != shown }.take(3)
             .map { it.key to it.correlation.toFloat().coerceIn(0f, 1f) }
+    }
+
+    /** Extends or starts a chord segment from the latest chroma frame. */
+    private fun updateChords() {
+        val now = (hopIndex * hopSeconds).toFloat()
+        val chord = chordDetector.process(chromaExtractor.frameChroma)
+        if (chord != openChord) {
+            closeSegment(now)
+            openChord = chord
+            openStart = now
+        }
+    }
+
+    private fun closeSegment(now: Float) {
+        val chord = openChord
+        if (chord != null && now > openStart) {
+            val last = segments.lastOrNull()
+            if (last != null && last.chord == chord && openStart - last.endSeconds < 0.05f) {
+                segments[segments.size - 1] = ChordSegment(chord, last.startSeconds, now)
+            } else {
+                segments += ChordSegment(chord, openStart, now)
+            }
+        }
+    }
+
+    /** The chord sequence including the chord still sounding. */
+    private fun currentSegments(): List<ChordSegment> {
+        val now = (hopIndex * hopSeconds).toFloat()
+        val chord = openChord
+        if (chord == null || now <= openStart) return segments
+        return segments + ChordSegment(chord, openStart, now)
+    }
+
+    private fun updateSongKey() {
+        val all = currentSegments()
+        val ranked = ChordKeyEstimator.suggest(all)
+        if (ranked.isEmpty()) return
+        val total = all.sumOf { it.duration.toDouble() }
+        // A few seconds of chords are needed before a whole-song suggestion means anything.
+        if (total < 4.0) return
+        songKey = ranked[0].key
+        songKeyCadences = ranked[0].cadences
+        songKeyConfidence = ChordKeyEstimator.confidence(ranked).toFloat()
+        songKeyAlternative = ranked[1].key
+        chordShares = all.groupBy { it.chord!! }
+            .map { (chord, segs) -> chord to (segs.sumOf { it.duration.toDouble() } / total).toFloat() }
+            .sortedByDescending { it.second }
     }
 
     private var tempo: TempoTracker.Estimate? = null
@@ -246,6 +328,13 @@ class MusicAnalyzer(
             meterConfidence = m?.confidence?.toFloat() ?: 0f,
             lastBeatIndexInBar = if (m != null) shownMeterIndex else 0,
             meterScores = m?.scores?.mapValues { it.value.toFloat() } ?: emptyMap(),
+            currentChord = chordDetector.current,
+            chordSegments = currentSegments(),
+            chordShares = chordShares,
+            songKey = songKey,
+            songKeyConfidence = songKeyConfidence,
+            songKeyCadences = songKeyCadences,
+            songKeyAlternative = songKeyAlternative,
         )
     }
 }

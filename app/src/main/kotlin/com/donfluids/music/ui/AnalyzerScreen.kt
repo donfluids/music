@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +63,7 @@ import com.donfluids.music.AnalyzerViewModel
 import com.donfluids.music.R
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
+import com.donfluids.music.music.ChordLabel
 import com.donfluids.music.music.Key
 import com.donfluids.music.music.Notes
 import kotlin.math.abs
@@ -118,6 +120,7 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel) {
             }
             PresetRow(state.preset, viewModel::setPreset)
             KeyCard(state.analysis, state.listening)
+            SongCard(state.analysis, state.listening)
             TempoCard(state.analysis, state.listening, state.tempoMultiplier, frameNanos, viewModel::cycleTempoMultiplier)
             MeterCard(state.analysis, state.listening)
             ClipsCard(
@@ -442,6 +445,99 @@ private fun ChromaBars(chroma: List<Float>, key: Key) {
                     color = if (i in inScale) MaterialTheme.colorScheme.onSurface else muted,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SongCard(a: AnalysisResult, listening: Boolean) {
+    SectionCard(stringResource(R.string.song_heading)) {
+        val spellingKey = a.songKey ?: a.key
+        val segments = a.chordSegments
+        if (segments.isEmpty() && a.currentChord == null) {
+            Placeholder(listening)
+            return@SectionCard
+        }
+        // Now playing.
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                a.currentChord?.name(spellingKey) ?: "–",
+                fontSize = 48.sp,
+                lineHeight = 48.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Column(Modifier.padding(bottom = 6.dp)) {
+                Text("now", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val heard = segments.lastOrNull()?.endSeconds ?: 0f
+                Text(
+                    "%d:%02d of chords heard".format((heard / 60).toInt(), (heard % 60).toInt()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        // Timeline of the most recent chords, newest on the right.
+        val recent = segments.takeLast(24)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState(), reverseScrolling = true),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            recent.forEach { seg ->
+                val chord = seg.chord ?: return@forEach
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(chord.name(spellingKey), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (spellingKey != null) chord.numeralIn(spellingKey) else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        // Whole-song key suggestion.
+        val songKey = a.songKey
+        if (songKey != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Key from the chords: ${songKey.label}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            ConfidenceBar(a.songKeyConfidence, confidenceWord(a.songKeyConfidence))
+            val top = a.chordShares.take(6)
+            Text(
+                top.joinToString("   ") { (chord, share) ->
+                    "${chord.name(songKey)} ${chord.numeralIn(songKey)} ${(share * 100).roundToInt()}%"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val notes = buildList {
+                if (a.songKeyCadences > 0) add("${a.songKeyCadences} V–I cadence" + if (a.songKeyCadences > 1) "s" else "")
+                a.songKeyAlternative?.let { add("or ${it.label}") }
+                a.key?.let { if (it != songKey) add("the note-based key card says ${it.label}") }
+            }
+            if (notes.isNotEmpty()) {
+                Text(
+                    notes.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else if (segments.isNotEmpty()) {
+            Text(
+                "A few more chords and a key will be suggested.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

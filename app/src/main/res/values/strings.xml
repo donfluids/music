@@ -8,6 +8,7 @@
     <string name="permission_denied">Microphone permission was denied. Enable it in system settings for LiveKey.</string>
     <string name="key_heading">Key</string>
     <string name="tempo_heading">Tempo</string>
+    <string name="song_heading">Chords in this song</string>
     <string name="meter_heading">Time signature</string>
     <string name="listening_placeholder">Listening…</string>
     <string name="idle_placeholder">Tap Start and let the song play for a few bars.</string>

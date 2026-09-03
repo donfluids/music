@@ -6,6 +6,11 @@ Point the phone at the singing and it reports:
 - **Key** – tonic and mode (for example *G major*), with the relative key, the scale notes,
   the seven diatonic chords with roman numerals, and how sharp or flat the singers are of
   A = 440 Hz. That last number matters: an impromptu song often lands between two keys.
+- **Chords in this song** – the triad sounding now, the sequence of chords heard since the
+  song began with roman numerals, and a second key suggestion made from the whole chord
+  sequence: which key the chords function in (I, IV, V, vi), how many V–I cadences were
+  heard, and how the song opened and closed. This is the one to trust once a verse has gone
+  by; the Key card above it reacts faster but only looks at the last eight seconds.
 - **Tempo** – beats per minute with a pulsing beat indicator and a 1‑2‑3‑4 beat counter
   that highlights the downbeat.
 - **Time signature** – 2/4, 3/4, 4/4, 5/4, 6/8, 7/8, 9/8 or 12/8, with the runner‑up
@@ -68,6 +73,8 @@ and has no Android dependencies, so it is covered by JVM unit tests.
 | Stage | Method |
 | --- | --- |
 | Chroma | 8192‑point FFT every 46 ms; spectral peaks are refined by parabolic interpolation and mapped to pitch classes. Only peaks count, which keeps neighbouring bass semitones apart. |
+| Chords | Chroma frames smoothed over 0.4 s, cosine-matched against 24 major/minor triad templates, with a hold of four frames before a change is announced. |
+| Song key | Every key scores each chord by its function (tonic 1.0, IV and V 0.8, vi 0.6, ii 0.5, iii 0.4, bVII 0.25, foreign chords negative) weighted by how long it sounded, plus bonuses for V–I cadences and for opening or closing on the tonic. |
 | Key | Krumhansl–Schmuckler correlation of the exponentially decayed chroma (8 s memory) with the 24 major/minor profiles, plus a short hysteresis so the display does not flicker. |
 | Tuning | Weighted circular mean of each peak's distance from the equal‑tempered grid. |
 | Onsets | Log‑compressed spectral flux, 2048‑point FFT, 512‑sample hop. |
