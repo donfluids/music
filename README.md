@@ -21,20 +21,29 @@ Everything runs on the phone; no audio leaves the device.
 ## Using it
 
 1. Tap **Listen** and grant the microphone permission.
-2. The row at the top shows the three answers: key, BPM and time signature. A thin line under
-   each grows as the app becomes sure; it turns teal once the value has settled. The key
-   usually settles within two or three seconds, the tempo within about four, and the time
-   signature needs two to four bars.
-3. Under the row: any caution worth knowing (the notes and the chords disagree, or the singers
-   are between two keys), the beat dots with the downbeat in coral, the seven chords of the key
-   with the one sounding now highlighted, and the chord sequence heard so far.
-4. **Details** at the bottom opens the diagnostics: tempo felt as half or double, tuning in
-   cents, the note-based and chord-based keys with their runners-up, the notes heard, and the
-   bar-length candidates.
-5. Tap **New song** when the next song starts so the previous one stops influencing the result.
+2. The top row shows the key to play in and the chord sounding now; the row under it shows
+   the tempo with beat dots and the time signature. A thin line under each value grows as the
+   app becomes sure and turns teal once the value has settled. The key usually settles within
+   two or three seconds, the tempo within about four, and the time signature needs two to four
+   bars. The chord is confirmed with a little look-ahead, so it lands about half a beat late.
+3. **Hold** freezes the key so nothing changes under your hands; the chord and beat keep
+   running. Tap again to release.
+4. **Transpose** shifts every displayed key and chord to what you should play, for example
+   when the singers are in Db and you would rather play in C with the keyboard transposed
+   up one. **Numbers** shows Nashville numbers (1, 4, 5, 6m) instead of letters.
+5. Tap the BPM to hear the tempo as double or half when the tracker has picked the wrong
+   pulse.
+6. Under the values: a caution when the notes and the chords disagree or the singers are
+   between two keys, the seven chords of the key with the one sounding now highlighted, and
+   the chord sequence heard so far.
+7. **Details** at the bottom opens the diagnostics: tuning in cents, the note-based and
+   chord-based keys with their runners-up, the notes heard, and the bar-length candidates.
+8. Tap **New song** when the next song starts so the previous one stops influencing the
+   result. **Stop** keeps the last result on screen until you listen again.
 
 The ☾ / ☀ button in the top bar switches between light and dark; the choice is remembered.
-The screen stays on while listening.
+The screen stays on while listening, and the microphone is released whenever the app leaves
+the foreground.
 
 ### Presets
 
@@ -54,15 +63,18 @@ analysis over.
 
 The ⋮ menu records clips so the presets can be tuned to your room.
 
-1. While listening, choose **Record clip for tuning**. A coral REC chip shows the elapsed
-   seconds; tap it or choose Stop clip to end early, otherwise it stops at 60 seconds.
+1. While listening, choose **Record clip for tuning**. The first time, a notice explains
+   what a clip stores; clips record everyone within earshot, so let the people singing know.
+   A coral REC chip shows the elapsed seconds; tap it or choose Stop clip to end early,
+   otherwise it stops at 60 seconds.
 2. A dialog asks what the song really was: key, tempo, time signature and any notes.
    Fill in what you know; the rest can stay blank.
 3. **Share clips** sends every clip as one zip (each clip is a WAV file plus a JSON sidecar
    with the preset, the app's decisions over time, the chord sequence, and your labels).
 
-Clips stay on the phone under `Android/data/com.donfluids.music/files/clips` until you
-choose **Delete clips**. Nothing is uploaded unless you share it.
+Clips are kept in the app's private storage, where other apps cannot read them, until you
+choose **Delete clips**. Nothing is uploaded unless you share it. Sidecars record the Android
+version but not the phone model.
 
 To replay clips through the analyser on a computer, unzip them and run:
 

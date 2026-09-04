@@ -155,7 +155,7 @@ class ClipRecorder(
     private fun sidecar(finalResult: AnalysisResult, durationSeconds: Double): JSONObject = JSONObject()
         .put("clip", name)
         .put("recordedAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(Date()))
-        .put("device", "${Build.MANUFACTURER} ${Build.MODEL} / Android ${Build.VERSION.RELEASE}")
+        .put("android", Build.VERSION.SDK_INT) // API level only; no device model
         .put("sampleRate", sampleRate)
         .put("preset", preset.id)
         .put("durationSeconds", round(durationSeconds))

@@ -19,6 +19,9 @@ data class ChordLabel(val root: Int, val type: ChordType) {
     /** Minor-third chords (m, m7); everything else is treated as major-family for key finding. */
     val minor: Boolean get() = type.isMinor
 
+    /** The same chord moved by [semitones]. */
+    fun transposed(semitones: Int): ChordLabel = ChordLabel(Math.floorMod(root + semitones, 12), type)
+
     /** The plain triad this chord stands on, for comparisons that ignore extensions. */
     val triad: ChordLabel get() = ChordLabel(root, minor)
 
@@ -44,11 +47,23 @@ data class ChordLabel(val root: Int, val type: ChordType) {
         }
     }
 
+    /**
+     * Nashville number relative to [key]: "1", "2m", "4", "5", "6m", "b7", with extensions
+     * appended ("57", "2m7", "4sus4"). Minor keys count from their own tonic.
+     */
+    fun nashvilleIn(key: Key): String {
+        val interval = Math.floorMod(root - key.tonic, 12)
+        val degree = if (key.mode == Mode.MAJOR) MAJOR_NUMBERS[interval] else MINOR_NUMBERS[interval]
+        return degree + type.suffix
+    }
+
     override fun toString(): String = name(false)
 
     private companion object {
         val MAJOR_DEGREES = arrayOf("I", "bII", "II", "bIII", "III", "IV", "#IV", "V", "bVI", "VI", "bVII", "VII")
         val MINOR_DEGREES = arrayOf("I", "bII", "II", "III", "#III", "IV", "#IV", "V", "VI", "#VI", "VII", "#VII")
+        val MAJOR_NUMBERS = arrayOf("1", "b2", "2", "b3", "3", "4", "#4", "5", "b6", "6", "b7", "7")
+        val MINOR_NUMBERS = arrayOf("1", "b2", "2", "3", "#3", "4", "#4", "5", "6", "#6", "7", "#7")
     }
 }
 

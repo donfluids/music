@@ -13,6 +13,7 @@ import com.donfluids.music.audio.ClipStore
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
 import com.donfluids.music.dsp.MusicAnalyzer
+import com.donfluids.music.music.Key
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +32,14 @@ data class UiState(
     val darkTheme: Boolean? = null,
     /** Display-only multiplier for the tempo (0.5, 1 or 2) when the tracker picks the wrong pulse. */
     val tempoMultiplier: Float = 1f,
+    /** The key frozen by Hold, or null when the display follows the analysis. */
+    val heldKey: Key? = null,
+    /** Semitones added to every displayed key and chord: what to play, not what sounds. */
+    val transpose: Int = 0,
+    /** Show Nashville numbers instead of chord letters. */
+    val nashville: Boolean = false,
+    /** True while the first-clip notice is waiting to be accepted. */
+    val clipNoticePending: Boolean = false,
     val analysis: AnalysisResult = AnalysisResult(),
     val recording: Boolean = false,
     val recordingSeconds: Int = 0,
@@ -56,6 +65,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         UiState(
             preset = AnalysisPreset.byId(prefs.getString(PREF_PRESET, null)),
             darkTheme = if (prefs.contains(PREF_DARK)) prefs.getBoolean(PREF_DARK, false) else null,
+            nashville = prefs.getBoolean(PREF_NASHVILLE, false),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -143,7 +153,24 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     fun reset() {
         session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, _state.value.preset) }
         recorder.get()?.analysisStartSeconds = 0f // the clip's chord filter follows the new clock
-        _state.update { it.copy(analysis = AnalysisResult(), tempoMultiplier = 1f) }
+        _state.update { it.copy(analysis = AnalysisResult(), tempoMultiplier = 1f, heldKey = null, transpose = 0) }
+    }
+
+    /** Freeze the shown key so nothing changes under the player's hands; tap again to release. */
+    fun toggleHold() {
+        _state.update {
+            if (it.heldKey != null) it.copy(heldKey = null)
+            else it.copy(heldKey = it.analysis.displayKey ?: it.analysis.key)
+        }
+    }
+
+    fun setTranspose(semitones: Int) {
+        _state.update { it.copy(transpose = semitones.coerceIn(-6, 6)) }
+    }
+
+    fun setNashville(enabled: Boolean) {
+        prefs.edit().putBoolean(PREF_NASHVILLE, enabled).apply()
+        _state.update { it.copy(nashville = enabled) }
     }
 
     /** Switch presets. While listening, analysis starts over with the new settings. */
@@ -173,6 +200,10 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     fun startClip() {
         val s = session ?: return
         if (recorder.get() != null) return
+        if (!prefs.getBoolean(PREF_CLIP_NOTICE, false)) {
+            _state.update { it.copy(clipNoticePending = true) }
+            return
+        }
         lastReportedSecond = -1
         val r = ClipRecorder(
             dir = clips.dir,
@@ -186,6 +217,17 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             return
         }
         _state.update { it.copy(recording = true, recordingSeconds = 0, error = null) }
+    }
+
+    /** The user has read the recording notice; remember it and start the clip they asked for. */
+    fun acceptClipNotice() {
+        prefs.edit().putBoolean(PREF_CLIP_NOTICE, true).apply()
+        _state.update { it.copy(clipNoticePending = false) }
+        startClip()
+    }
+
+    fun dismissClipNotice() {
+        _state.update { it.copy(clipNoticePending = false) }
     }
 
     fun stopClip() {
@@ -239,5 +281,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     private companion object {
         const val PREF_PRESET = "preset"
         const val PREF_DARK = "dark"
+        const val PREF_NASHVILLE = "nashville"
+        const val PREF_CLIP_NOTICE = "clipNoticeAccepted"
     }
 }

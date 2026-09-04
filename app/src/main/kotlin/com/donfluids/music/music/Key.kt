@@ -15,6 +15,9 @@ data class Key(val tonic: Int, val mode: Mode) {
         get() = if (mode == Mode.MAJOR) Key(Math.floorMod(tonic - 3, 12), Mode.MINOR)
         else Key(Math.floorMod(tonic + 3, 12), Mode.MAJOR)
 
+    /** The same key moved by [semitones]. */
+    fun transposed(semitones: Int): Key = Key(Math.floorMod(tonic + semitones, 12), mode)
+
     /** Number of sharps (positive) or flats (negative) in the key signature. */
     val signature: Int
         get() {
