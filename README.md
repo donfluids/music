@@ -20,18 +20,25 @@ Everything runs on the phone; no audio leaves the device.
 
 ## Using it
 
-1. Tap **Start listening** and grant the microphone permission.
-2. Let the song run for a few bars. The key usually settles within two or three seconds,
-   the tempo within about four, and the time signature needs two to four bars.
-3. Tap **New song** when the next song starts so the previous one stops influencing the result.
-4. If the tempo shows the wrong pulse (double or half of what you feel), tap
-   **feel it ×2 / ÷2**. That only changes the displayed number and the pulse rate.
+1. Tap **Listen** and grant the microphone permission.
+2. The row at the top shows the three answers: key, BPM and time signature. A thin line under
+   each grows as the app becomes sure; it turns teal once the value has settled. The key
+   usually settles within two or three seconds, the tempo within about four, and the time
+   signature needs two to four bars.
+3. Under the row: any caution worth knowing (the notes and the chords disagree, or the singers
+   are between two keys), the beat dots with the downbeat in coral, the seven chords of the key
+   with the one sounding now highlighted, and the chord sequence heard so far.
+4. **Details** at the bottom opens the diagnostics: tempo felt as half or double, tuning in
+   cents, the note-based and chord-based keys with their runners-up, the notes heard, and the
+   bar-length candidates.
+5. Tap **New song** when the next song starts so the previous one stops influencing the result.
 
+The ☾ / ☀ button in the top bar switches between light and dark; the choice is remembered.
 The screen stays on while listening.
 
 ### Presets
 
-Pick the preset that matches what the phone is hearing. The pipeline is the same; the
+Pick the preset from the dropdown in the top bar to match what the phone is hearing. The pipeline is the same; the
 presets change which frequencies count and how patient the estimates are.
 
 | Preset | Use when | What changes |
@@ -45,17 +52,17 @@ analysis over.
 
 ### Recording clips for tuning
 
-The bottom card records clips so the presets can be tuned to your room.
+The ⋮ menu records clips so the presets can be tuned to your room.
 
-1. While listening, tap **Record clip**. It stops by itself after 60 seconds, or earlier
-   when you tap **Stop clip**.
+1. While listening, choose **Record clip for tuning**. A coral REC chip shows the elapsed
+   seconds; tap it or choose Stop clip to end early, otherwise it stops at 60 seconds.
 2. A dialog asks what the song really was: key, tempo, time signature and any notes.
    Fill in what you know; the rest can stay blank.
-3. Tap **Share** to send every clip as one zip (each clip is a WAV file plus a JSON
-   sidecar with the preset, the app's decisions over time, and your labels).
+3. **Share clips** sends every clip as one zip (each clip is a WAV file plus a JSON sidecar
+   with the preset, the app's decisions over time, the chord sequence, and your labels).
 
 Clips stay on the phone under `Android/data/com.donfluids.music/files/clips` until you
-tap **Delete all**. Nothing is uploaded unless you share it.
+choose **Delete clips**. Nothing is uploaded unless you share it.
 
 To replay clips through the analyser on a computer, unzip them and run:
 

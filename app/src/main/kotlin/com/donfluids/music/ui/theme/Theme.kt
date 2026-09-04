@@ -1,48 +1,71 @@
 package com.donfluids.music.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 
-val Gold = Color(0xFFF2C14E)
-val Teal = Color(0xFF3EC7B0)
-val Coral = Color(0xFFF07167)
-
-private val DarkScheme = darkColorScheme(
-    primary = Gold,
-    onPrimary = Color(0xFF2B1F00),
-    secondary = Teal,
-    onSecondary = Color(0xFF00201A),
-    tertiary = Coral,
-    background = Color(0xFF101418),
-    onBackground = Color(0xFFE6E9EE),
-    surface = Color(0xFF1A2027),
-    onSurface = Color(0xFFE6E9EE),
-    surfaceVariant = Color(0xFF242C35),
-    onSurfaceVariant = Color(0xFFB4BCC6),
+// One accent (teal) used sparingly, one signal colour (coral) for the downbeat and recording.
+private val LightScheme = lightColorScheme(
+    primary = Color(0xFF0F766E),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD9F0EC),
+    onPrimaryContainer = Color(0xFF0B3F3B),
+    secondary = Color(0xFF0F766E),
+    tertiary = Color(0xFFE07A5F),
+    onTertiary = Color.White,
+    background = Color(0xFFFAF9F6),
+    onBackground = Color(0xFF1C1B19),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1C1B19),
+    surfaceVariant = Color(0xFFF0EEE9),
+    onSurfaceVariant = Color(0xFF6B6660),
+    outline = Color(0xFFD8D4CC),
+    outlineVariant = Color(0xFFE8E5DE),
 )
 
-private val LightScheme = lightColorScheme(
-    primary = Color(0xFF7A5A00),
-    onPrimary = Color.White,
-    secondary = Color(0xFF00695C),
-    onSecondary = Color.White,
-    tertiary = Color(0xFFB3261E),
-    background = Color(0xFFF7F6F2),
-    onBackground = Color(0xFF1B1C1E),
-    surface = Color.White,
-    onSurface = Color(0xFF1B1C1E),
-    surfaceVariant = Color(0xFFEDEBE4),
-    onSurfaceVariant = Color(0xFF4A4D52),
+private val DarkScheme = darkColorScheme(
+    primary = Color(0xFF5EEAD4),
+    onPrimary = Color(0xFF00332E),
+    primaryContainer = Color(0xFF134E4A),
+    onPrimaryContainer = Color(0xFFCCFBF1),
+    secondary = Color(0xFF5EEAD4),
+    tertiary = Color(0xFFF2997F),
+    onTertiary = Color(0xFF3B1409),
+    background = Color(0xFF141516),
+    onBackground = Color(0xFFECEAE4),
+    surface = Color(0xFF1E2022),
+    onSurface = Color(0xFFECEAE4),
+    surfaceVariant = Color(0xFF2A2D30),
+    onSurfaceVariant = Color(0xFFA19C94),
+    outline = Color(0xFF3A3D41),
+    outlineVariant = Color(0xFF2E3134),
+)
+
+/** Tabular figures so a changing BPM does not shift in width. */
+const val Tabular = "tnum"
+
+private val LiveKeyTypography = Typography(
+    displayLarge = TextStyle(fontSize = 56.sp, lineHeight = 60.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp),
+    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+    titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium),
+    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
+    bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 16.sp),
+    labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.3.sp),
+    labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium),
 )
 
 @Composable
-fun LiveKeyTheme(content: @Composable () -> Unit) {
+fun LiveKeyTheme(dark: Boolean, content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkScheme else LightScheme,
+        colorScheme = if (dark) DarkScheme else LightScheme,
+        typography = LiveKeyTypography,
         content = content,
     )
 }

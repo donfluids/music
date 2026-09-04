@@ -23,6 +23,8 @@ data class UiState(
     val listening: Boolean = false,
     val error: String? = null,
     val preset: AnalysisPreset = AnalysisPreset.BAND,
+    /** Null follows the system setting; true or false is the user's choice. */
+    val darkTheme: Boolean? = null,
     /** Display-only multiplier for the tempo (0.5, 1 or 2) when the tracker picks the wrong pulse. */
     val tempoMultiplier: Float = 1f,
     val analysis: AnalysisResult = AnalysisResult(),
@@ -41,7 +43,11 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     private val clips = ClipStore(application)
 
     private val _state = MutableStateFlow(
-        UiState(preset = AnalysisPreset.byId(prefs.getString(PREF_PRESET, null)), clipCount = clips.count()),
+        UiState(
+            preset = AnalysisPreset.byId(prefs.getString(PREF_PRESET, null)),
+            darkTheme = if (prefs.contains(PREF_DARK)) prefs.getBoolean(PREF_DARK, false) else null,
+            clipCount = clips.count(),
+        ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -107,11 +113,14 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(preset = preset, analysis = AnalysisResult(), tempoMultiplier = 1f) }
     }
 
-    fun cycleTempoMultiplier() {
-        _state.update {
-            val next = when (it.tempoMultiplier) { 1f -> 2f; 2f -> 0.5f; else -> 1f }
-            it.copy(tempoMultiplier = next)
-        }
+    fun setTempoMultiplier(multiplier: Float) {
+        _state.update { it.copy(tempoMultiplier = multiplier) }
+    }
+
+    /** Switches between light and dark, starting from whatever is currently shown. */
+    fun setDarkTheme(dark: Boolean) {
+        prefs.edit().putBoolean(PREF_DARK, dark).apply()
+        _state.update { it.copy(darkTheme = dark) }
     }
 
     fun reportPermissionDenied(message: String) {
@@ -173,5 +182,6 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
 
     private companion object {
         const val PREF_PRESET = "preset"
+        const val PREF_DARK = "dark"
     }
 }
