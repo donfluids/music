@@ -13,7 +13,8 @@ import kotlin.math.sqrt
  * for 6/8; 2+2+3 and friends for 7/8).
  *
  * Uneven meters cannot be a single tracked pulse: in 7/8 the tracker settles on a two-eighth
- * pulse, or on the whole bar. So the odd templates (5 and 7) are also tried on finer grids:
+ * pulse, or on the whole bar, and a slow 6/8 is often tracked at two eighths too. So the odd
+ * templates (5 and 7) and the six-eighth bar are also tried on finer grids:
  * the half-pulse, and the pulse divided by 5 or 7. The grid that wins decides the pulse the
  * screen counts in ([Result.pulseDivisor]).
  *
@@ -52,7 +53,7 @@ class MeterDetector(
         Template(4, doubleArrayOf(1.0, 0.2, 0.6, 0.2), 1.05),
         Template(5, doubleArrayOf(1.0, 0.2, 0.6, 0.2, 0.2), 0.85), // 2+3
         Template(5, doubleArrayOf(1.0, 0.2, 0.2, 0.6, 0.2), 0.85), // 3+2
-        Template(6, doubleArrayOf(1.0, 0.2, 0.2, 0.7, 0.2, 0.2), 0.95),
+        Template(6, doubleArrayOf(1.0, 0.2, 0.2, 0.7, 0.2, 0.2), 1.00),
         Template(7, doubleArrayOf(1.0, 0.2, 0.6, 0.2, 0.6, 0.2, 0.2), 0.85), // 2+2+3
         Template(7, doubleArrayOf(1.0, 0.2, 0.2, 0.6, 0.2, 0.6, 0.2), 0.85), // 3+2+2
         Template(7, doubleArrayOf(1.0, 0.2, 0.6, 0.2, 0.2, 0.6, 0.2), 0.85), // 2+3+2
@@ -63,10 +64,28 @@ class MeterDetector(
 
     private val grids = listOf(
         Grid(1, 1.00, setOf(2, 3, 4, 5, 6, 7)),
-        Grid(2, 0.90, setOf(5, 7)),
-        Grid(5, 0.80, setOf(5)),
-        Grid(7, 0.80, setOf(7)),
+        Grid(2, 1.05, setOf(5, 6, 7)), // 6: a slow 6/8 tracked at the two-eighth pulse
+        Grid(5, 0.90, setOf(5)),
+        Grid(7, 0.90, setOf(7)),
     )
+
+    /**
+     * A finer grid only deserves its prior when there is real onset energy between the tracked
+     * pulses; on a song with nothing between beats it is discounted, which keeps 5/4 and 7/8
+     * from appearing on ordinary music.
+     */
+    private fun gridPrior(grid: Grid, strengths: DoubleArray): Double {
+        if (grid.divisor == 1) return grid.prior
+        var on = 0.0; var onCount = 0
+        var off = 0.0; var offCount = 0
+        val count = strengths.size
+        for (i in strengths.indices) {
+            if ((count - 1 - i) % grid.divisor == 0) { on += strengths[i]; onCount++ } else { off += strengths[i]; offCount++ }
+        }
+        if (onCount == 0 || offCount == 0 || on <= 0.0) return 0.6
+        val ratio = (off / offCount) / (on / onCount)
+        return 0.6 + (grid.prior - 0.6) * (ratio / 0.35).coerceIn(0.0, 1.0)
+    }
 
     /**
      * @param onset detrended onset strength, oldest first, valid for [length] entries
@@ -93,6 +112,7 @@ class MeterDetector(
             val strengths = gridStrengths(onset, length, newestBeat, step) ?: continue
             val z = zScore(strengths)
             val count = strengths.size
+            val gridPrior = gridPrior(grid, strengths)
             for (template in templates) {
                 val m = template.beats
                 if (m !in grid.beats || count < 2 * m) continue
@@ -110,7 +130,7 @@ class MeterDetector(
                     }
                     for (j in 0 until m) folded[j] /= counts[j]
                     val fit = dot(zScore(folded), template.accents) / m
-                    val score = grid.prior * prior * (0.65 * fit + 0.35 * periodicity)
+                    val score = gridPrior * prior * (0.65 * fit + 0.35 * periodicity)
                     if (score > gridBest) { gridBest = score; gridOffset = offset }
                     if (score > bestScore) {
                         bestScore = score
@@ -154,22 +174,28 @@ class MeterDetector(
         return DoubleArray(count) { i -> windowMax(onset, length, newest - (count - 1 - i) * step, window) }
     }
 
-    /** Is the space between tracked beats split in three rather than two? */
+    /**
+     * Is the space between tracked beats split in three rather than two? Both thirds must carry
+     * energy: a swung eighth sits at two thirds alone and is duple, not compound.
+     */
     private fun isCompound(onset: FloatArray, length: Int, newest: Double, period: Double): Boolean {
         val sub = period / 20.0
         var half = 0.0
-        var third = 0.0
+        var firstThird = 0.0
+        var secondThird = 0.0
         var beat = 0.0
         var t = newest
         while (t - period >= 0) {
             val start = t - period
             beat += windowMax(onset, length, start, period / 8.0)
             half += windowMax(onset, length, start + period / 2.0, sub)
-            third += 0.5 * (windowMax(onset, length, start + period / 3.0, sub) +
-                windowMax(onset, length, start + 2.0 * period / 3.0, sub))
+            firstThird += windowMax(onset, length, start + period / 3.0, sub)
+            secondThird += windowMax(onset, length, start + 2.0 * period / 3.0, sub)
             t -= period
         }
-        return third > 1.3 * half && third > 0.25 * beat
+        val third = 0.5 * (firstThird + secondThird)
+        val bothThirds = minOf(firstThird, secondThird) > 0.35 * maxOf(firstThird, secondThird)
+        return bothThirds && third > 1.3 * half && third > 0.25 * beat
     }
 
     private companion object {

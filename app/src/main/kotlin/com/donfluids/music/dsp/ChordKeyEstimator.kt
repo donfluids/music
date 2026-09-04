@@ -35,6 +35,8 @@ object ChordKeyEstimator {
         interval == 10 && !minor -> 0.25 // bVII, common in worship songs
         interval == 5 && minor -> 0.15   // iv borrowed
         interval == 2 && !minor -> 0.1   // II (V of V)
+        interval == 4 && !minor -> 0.0   // III (V of vi), common in gospel
+        interval == 9 && !minor -> 0.0   // VI (V of ii)
         else -> -0.3
     }
 
@@ -48,6 +50,7 @@ object ChordKeyEstimator {
         interval == 3 && !minor -> 0.5   // III
         interval == 10 && !minor -> 0.5  // VII
         interval == 5 && !minor -> 0.15  // IV (dorian)
+        interval == 2 && minor -> 0.4    // ii (the diminished chord is heard as minor)
         else -> -0.3
     }
 
@@ -88,11 +91,11 @@ object ChordKeyEstimator {
                 if (previous != null && previous != c && isDominant(key, previous) && isTonic(key, c)) cadences++
                 previous = c
             }
-            // Each cadence is worth about two seconds of tonic, capped so a long song cannot run away.
-            score += minOf(cadences, 6) * (2.0 / total)
+            // Cadences add a bounded bonus so a short excerpt with two of them is not swamped.
+            score += minOf(cadences * 0.03, 0.15)
             if (isTonic(key, chords.first().chord!!)) score += 0.05
             if (isTonic(key, chords.last().chord!!)) score += 0.05
-            out += Suggestion(key, score.coerceIn(0.0, 1.0), cadences)
+            out += Suggestion(key, score, cadences)
         }
         out.sortByDescending { it.score }
         return out
@@ -103,6 +106,6 @@ object ChordKeyEstimator {
         if (ranked.size < 2) return 0.0
         val best = ranked[0].score
         val second = ranked[1].score
-        return (0.5 * best + 0.5 * ((best - second) * 4.0).coerceIn(0.0, 1.0)).coerceIn(0.0, 1.0)
+        return (0.5 * best.coerceIn(0.0, 1.0) + 0.5 * ((best - second) * 4.0).coerceIn(0.0, 1.0)).coerceIn(0.0, 1.0)
     }
 }

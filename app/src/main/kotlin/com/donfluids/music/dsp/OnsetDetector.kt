@@ -18,6 +18,12 @@ class OnsetDetector(
     /** Onsets below this frequency get [lowBandWeight] extra weight (kick, bass). 0 disables. */
     lowBandMaxHz: Double = 0.0,
     private val lowBandWeight: Float = 0f,
+    /**
+     * Bins on either side taken into the maximum of the previous frame before differencing
+     * (SuperFlux, Böck & Widmer 2013). A note wobbling by vibrato then no longer counts as a
+     * stream of onsets. 0 disables.
+     */
+    private val vibratoBins: Int = 2,
 ) {
     private val fft = Fft(fftSize)
     private val window = Fft.hannWindow(fftSize)
@@ -25,6 +31,7 @@ class OnsetDetector(
     private val im = FloatArray(fftSize)
     private val current = FloatArray(fftSize / 2 + 1)
     private val previous = FloatArray(fftSize / 2 + 1)
+    private val previousMax = FloatArray(fftSize / 2 + 1)
     private val binHz = sampleRate.toDouble() / fftSize
     private val minBin = (minHz / binHz).toInt().coerceAtLeast(1)
     private val maxBin = (maxHz / binHz).toInt().coerceAtMost(fftSize / 2)
@@ -44,11 +51,16 @@ class OnsetDetector(
         }
         fft.transform(re, im)
         val scale = 2f / fftSize
+        for (k in minBin..maxBin) current[k] = ln1p(gamma * sqrt(re[k] * re[k] + im[k] * im[k]) * scale)
+        // Widen the previous frame's peaks so small pitch drift does not look like a new note.
+        for (k in minBin..maxBin) {
+            var m = previous[k]
+            for (j in maxOf(minBin, k - vibratoBins)..minOf(maxBin, k + vibratoBins)) if (previous[j] > m) m = previous[j]
+            previousMax[k] = m
+        }
         var flux = 0f
         for (k in minBin..maxBin) {
-            val m = ln1p(gamma * sqrt(re[k] * re[k] + im[k] * im[k]) * scale)
-            current[k] = m
-            val d = m - previous[k]
+            val d = current[k] - previousMax[k]
             if (d > 0f) flux += if (k <= lowBandMaxBin) d * (1f + lowBandWeight) else d
         }
         val result = if (hasPrevious) flux else 0f

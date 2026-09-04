@@ -38,7 +38,7 @@ data class AnalysisPreset(
             onsetLowBandMaxHz = 250.0, onsetLowBandWeight = 1.5f,
             chromaMinHz = 55.0, chromaMaxHz = 3000.0, chromaRollOffHz = 1000.0,
             keyMemorySeconds = 8.0,
-            tempoPriorCenterBpm = 100.0, tempoPriorWidthOctaves = 1.0,
+            tempoPriorCenterBpm = 90.0, tempoPriorWidthOctaves = 0.6,
             meterMinBeats = 8,
         )
 
@@ -51,7 +51,7 @@ data class AnalysisPreset(
             onsetLowBandMaxHz = 0.0, onsetLowBandWeight = 0f,
             chromaMinHz = 70.0, chromaMaxHz = 2500.0, chromaRollOffHz = 800.0,
             keyMemorySeconds = 8.0,
-            tempoPriorCenterBpm = 100.0, tempoPriorWidthOctaves = 1.0,
+            tempoPriorCenterBpm = 90.0, tempoPriorWidthOctaves = 0.6,
             meterMinBeats = 8,
         )
 
@@ -64,7 +64,7 @@ data class AnalysisPreset(
             onsetLowBandMaxHz = 0.0, onsetLowBandWeight = 0f,
             chromaMinHz = 80.0, chromaMaxHz = 2000.0, chromaRollOffHz = 1000.0,
             keyMemorySeconds = 10.0,
-            tempoPriorCenterBpm = 90.0, tempoPriorWidthOctaves = 1.2,
+            tempoPriorCenterBpm = 90.0, tempoPriorWidthOctaves = 0.6,
             meterMinBeats = 12,
         )
 

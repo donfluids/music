@@ -34,8 +34,17 @@ data class AnalysisResult(
     /** Bar position (0 = downbeat) of the beat at [lastBeatAtNanos]. */
     val lastBeatIndexInBar: Int = 0,
     val meterScores: Map<Int, Float> = emptyMap(),
-    /** The triad sounding right now, if any. */
+    /**
+     * The key to show: the chord-based estimate once it has led convincingly for a while,
+     * the note-based estimate before that. Switching has hysteresis so it does not flip.
+     */
+    val displayKey: Key? = null,
+    val displayKeyConfidence: Float = 0f,
+    val displayKeyFromChords: Boolean = false,
+    /** The triad sounding right now, if any (confirmed with look-ahead, so slightly late). */
     val currentChord: ChordLabel? = null,
+    /** The tracker's best guess before look-ahead; faster but less reliable. */
+    val provisionalChord: ChordLabel? = null,
     /** Chords heard since the song started (or the last reset), oldest first, no-chord gaps removed. */
     val chordSegments: List<ChordSegment> = emptyList(),
     /** Share of chord time per chord, largest first. */
@@ -129,6 +138,10 @@ class MusicAnalyzer(
     private var songKeyCadences = 0
     private var songKeyAlternative: Key? = null
     private var chordShares: List<Pair<ChordLabel, Float>> = emptyList()
+    private var displayFromChords = false
+    private var chordKeyLeadRuns = 0
+    private var chordKeyTrailRuns = 0
+    private val displaySwitchRuns = 4 // rhythm updates, about two seconds
 
     private var levelRms = 0.0
     private var levelSamples = 0
@@ -179,6 +192,9 @@ class MusicAnalyzer(
         songKeyCadences = 0
         songKeyAlternative = null
         chordShares = emptyList()
+        displayFromChords = false
+        chordKeyLeadRuns = 0
+        chordKeyTrailRuns = 0
         result = AnalysisResult()
     }
 
@@ -245,7 +261,9 @@ class MusicAnalyzer(
             keyCandidateHits = 0
             return
         }
-        if (best == keyCandidate) keyCandidateHits++ else { keyCandidate = best; keyCandidateHits = 1 }
+        val shownCorrelation = shownKey?.let { k -> ranked.first { it.key == k }.correlation } ?: Double.NEGATIVE_INFINITY
+        val leadsClearly = ranked.first().correlation - shownCorrelation > 0.05
+        if (best == keyCandidate && leadsClearly) keyCandidateHits++ else { keyCandidate = best; keyCandidateHits = if (leadsClearly) 1 else 0 }
         if (shownKey == null || keyCandidateHits >= keyHitsToSwitch) shownKey = best
         val shown = shownKey ?: return
         pendingKey = shown
@@ -268,7 +286,10 @@ class MusicAnalyzer(
         observationFrames++
 
         val boundary = if (beatPeriodHops > 0.0) {
-            val gridIndex = Math.floorDiv((hopIndex - beatAnchorHop).toLong() * 2, beatPeriodHops.toLong().coerceAtLeast(1))
+            // Half beats, or quarter beats when a half beat would exceed 0.35 s, so decisions
+            // (made four observations late) never lag by more than about a second.
+            val divisions = if (beatPeriodHops * hopSeconds / 2.0 > 0.35) 4L else 2L
+            val gridIndex = Math.floorDiv((hopIndex - beatAnchorHop).toLong() * divisions, beatPeriodHops.toLong().coerceAtLeast(1))
             val crossed = lastGridIndex != Long.MIN_VALUE && gridIndex != lastGridIndex
             lastGridIndex = gridIndex
             crossed
@@ -335,6 +356,12 @@ class MusicAnalyzer(
         songKeyCadences = ranked[0].cadences
         songKeyConfidence = ChordKeyEstimator.confidence(ranked).toFloat()
         songKeyAlternative = ranked[1].key
+        // Promote the chord-based key only after it has been confident for a couple of seconds;
+        // demote it only after it has been weak for as long. The tracker follows the shown key.
+        if (songKeyConfidence >= 0.4f) { chordKeyLeadRuns++; chordKeyTrailRuns = 0 } else if (songKeyConfidence < 0.25f) { chordKeyTrailRuns++; chordKeyLeadRuns = 0 }
+        if (!displayFromChords && chordKeyLeadRuns >= displaySwitchRuns) displayFromChords = true
+        if (displayFromChords && chordKeyTrailRuns >= displaySwitchRuns) displayFromChords = false
+        chordTracker.setKey(if (displayFromChords) songKey else pendingKey)
         chordShares = all.groupBy { it.chord!! }
             .map { (chord, segs) -> chord to (segs.sumOf { it.duration.toDouble() } / total).toFloat() }
             .sortedByDescending { it.second }
@@ -427,7 +454,11 @@ class MusicAnalyzer(
             meterConfidence = m?.confidence?.toFloat() ?: 0f,
             lastBeatIndexInBar = beatIndex,
             meterScores = m?.scores?.mapValues { it.value.toFloat() } ?: emptyMap(),
+            displayKey = if (displayFromChords) songKey else pendingKey,
+            displayKeyConfidence = if (displayFromChords) songKeyConfidence else pendingKeyConfidence,
+            displayKeyFromChords = displayFromChords,
             currentChord = currentChord,
+            provisionalChord = chordTracker.provisional,
             chordSegments = currentSegments(),
             chordShares = chordShares,
             songKey = songKey,

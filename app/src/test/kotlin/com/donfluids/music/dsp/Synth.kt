@@ -59,6 +59,8 @@ object Synth {
         return out
     }
 
+    fun click(out: FloatArray, start: Int, amplitude: Float) = addClick(out, start, amplitude)
+
     private fun addClick(out: FloatArray, start: Int, amplitude: Float) {
         val length = (0.03 * SAMPLE_RATE).toInt()
         for (i in 0 until length) {
