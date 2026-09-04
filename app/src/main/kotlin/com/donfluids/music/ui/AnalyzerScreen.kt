@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +32,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -144,32 +147,29 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
         },
         bottomBar = {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (state.listening) {
-                    TextButton(onClick = viewModel::reset) { Text(stringResource(R.string.new_song)) }
-                    Spacer(Modifier.weight(1f))
-                    Button(
-                        onClick = viewModel::stop,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        contentPadding = ButtonDefaults.ContentPadding,
-                    ) { Text(stringResource(R.string.stop)) }
+                    OutlinedButton(onClick = viewModel::reset, modifier = Modifier.weight(1f).height(56.dp)) {
+                        Text(stringResource(R.string.new_song), style = MaterialTheme.typography.titleMedium)
+                    }
+                    FilledTonalButton(onClick = viewModel::stop, modifier = Modifier.weight(1f).height(56.dp)) {
+                        Text(stringResource(R.string.stop), style = MaterialTheme.typography.titleMedium)
+                    }
                 } else {
-                    Spacer(Modifier.weight(1f))
                     Button(
                         onClick = {
                             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                                 PackageManager.PERMISSION_GRANTED
                             if (granted) viewModel.start() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         },
-                        modifier = Modifier.height(52.dp).width(160.dp),
+                        modifier = Modifier.weight(1f).height(56.dp),
                     ) { Text(stringResource(R.string.listen), style = MaterialTheme.typography.titleMedium) }
-                    Spacer(Modifier.weight(1f))
                 }
             }
         },
@@ -351,28 +351,18 @@ private fun HeroRow(ans: Answer, a: AnalysisResult, multiplier: Float) {
     }
 }
 
-/** A large value with a small label and a thin underline whose length shows confidence. */
+/** A large value, a thin underline whose length shows confidence, and a label line. */
 @Composable
 private fun HeroValue(value: String, sub: String?, label: String, confidence: Float, modifier: Modifier = Modifier) {
     val known = value != "–"
     val settled = confidence >= 0.5f
     Column(modifier) {
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                value,
-                style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = Tabular),
-                color = if (known) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.outline,
-                maxLines = 1,
-            )
-            if (sub != null) {
-                Text(
-                    sub,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 10.dp),
-                )
-            }
-        }
+        Text(
+            value,
+            style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = Tabular),
+            color = if (known) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.outline,
+            maxLines = 1,
+        )
         Spacer(Modifier.height(6.dp))
         Box(Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
             Box(
@@ -383,7 +373,12 @@ private fun HeroValue(value: String, sub: String?, label: String, confidence: Fl
             )
         }
         Spacer(Modifier.height(4.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            if (sub != null) "$label · $sub" else label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }
 
