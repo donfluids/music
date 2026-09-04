@@ -78,9 +78,9 @@ class MusicAnalyzer(
         priorWidthOctaves = preset.tempoPriorWidthOctaves,
     )
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
-    private val chordDetector = ChordDetector()
+    private val chordTracker = ChordTracker()
 
-    private val windowSize = chromaExtractor.fftSize
+    private val windowSize = chromaExtractor.windowSamples
     private val window = FloatArray(windowSize)
     private val pending = FloatArray(hopSize)
     private var pendingCount = 0
@@ -108,6 +108,18 @@ class MusicAnalyzer(
     private val segments = ArrayList<ChordSegment>()
     private var openChord: ChordLabel? = null
     private var openStart = 0f
+    private var currentChord: ChordLabel? = null
+
+    // Chord observations: chroma frames averaged per half beat (or per 4 frames without a beat).
+    private val observationChroma = FloatArray(12)
+    private var observationFrames = 0
+    private var observationStart = 0f
+    private var lastGridIndex = Long.MIN_VALUE
+    private var beatAnchorHop = 0.0
+    private var beatPeriodHops = 0.0
+    private val observationSpans = ArrayDeque<Pair<Float, Float>>()
+    private val framesPerObservationWithoutBeat = 4
+    private val maxFramesPerObservation = 16
     private var songKey: Key? = null
     private var songKeyConfidence = 0f
     private var songKeyCadences = 0
@@ -135,10 +147,17 @@ class MusicAnalyzer(
         meterCandidateHits = 0
         shownMeter = null
         tempoAbsentRuns = 0
-        chordDetector.reset()
+        chordTracker.reset()
         segments.clear()
         openChord = null
         openStart = 0f
+        currentChord = null
+        observationChroma.fill(0f)
+        observationFrames = 0
+        observationStart = 0f
+        lastGridIndex = Long.MIN_VALUE
+        beatPeriodHops = 0.0
+        observationSpans.clear()
         songKey = null
         songKeyConfidence = 0f
         songKeyCadences = 0
@@ -183,7 +202,7 @@ class MusicAnalyzer(
 
         var changed = false
         if (hopIndex % chromaEveryHops == 0L) {
-            chromaExtractor.process(window, 0, hopSeconds * chromaEveryHops)
+            chromaExtractor.process(window, windowSize, hopSeconds * chromaEveryHops)
             updateKey()
             updateChords()
             changed = true
@@ -220,35 +239,73 @@ class MusicAnalyzer(
             .map { it.key to it.correlation.toFloat().coerceIn(0f, 1f) }
     }
 
-    /** Extends or starts a chord segment from the latest chroma frame. */
+    /**
+     * Adds the latest chroma frame to the current observation and, at each half-beat boundary
+     * (or every few frames when no beat is known), hands the averaged observation to the chord
+     * tracker. Decisions arrive a few observations late and are turned into timed segments.
+     */
     private fun updateChords() {
         val now = (hopIndex * hopSeconds).toFloat()
-        val chord = chordDetector.process(chromaExtractor.frameChroma)
-        if (chord != openChord) {
-            closeSegment(now)
-            openChord = chord
-            openStart = now
+        val frame = chromaExtractor.frameChroma
+        if (observationFrames == 0) observationStart = now - (hopSeconds * chromaEveryHops).toFloat()
+        for (i in 0 until 12) observationChroma[i] += frame[i]
+        observationFrames++
+
+        val boundary = if (beatPeriodHops > 0.0) {
+            val gridIndex = Math.floorDiv((hopIndex - beatAnchorHop).toLong() * 2, beatPeriodHops.toLong().coerceAtLeast(1))
+            val crossed = lastGridIndex != Long.MIN_VALUE && gridIndex != lastGridIndex
+            lastGridIndex = gridIndex
+            crossed
+        } else {
+            observationFrames >= framesPerObservationWithoutBeat
         }
+        if (!boundary && observationFrames < maxFramesPerObservation) return
+
+        for (i in 0 until 12) observationChroma[i] /= observationFrames
+        val span = observationStart to now
+        observationSpans.addLast(span)
+        while (observationSpans.size > chordTracker.lag + 1) observationSpans.removeFirst()
+        if (chordTracker.observe(observationChroma, (now - observationStart).toDouble())) {
+            // The decision refers to the observation `lag - 1` spans back from the newest.
+            val idx = observationSpans.size - chordTracker.lag
+            if (idx >= 0) {
+                val (start, end) = observationSpans.elementAt(idx)
+                applyDecision(chordTracker.decided, start, end)
+            }
+        }
+        observationChroma.fill(0f)
+        observationFrames = 0
     }
+
+    private fun applyDecision(chord: ChordLabel?, start: Float, end: Float) {
+        currentChord = chord
+        if (chord != openChord) {
+            closeSegment(start)
+            openChord = chord
+            openStart = start
+        }
+        openEnd = end
+    }
+    private var openEnd = 0f
 
     private fun closeSegment(now: Float) {
         val chord = openChord
-        if (chord != null && now > openStart) {
+        val end = minOf(now, openEnd).coerceAtLeast(openStart)
+        if (chord != null && end > openStart) {
             val last = segments.lastOrNull()
             if (last != null && last.chord == chord && openStart - last.endSeconds < 0.05f) {
-                segments[segments.size - 1] = ChordSegment(chord, last.startSeconds, now)
+                segments[segments.size - 1] = ChordSegment(chord, last.startSeconds, end)
             } else {
-                segments += ChordSegment(chord, openStart, now)
+                segments += ChordSegment(chord, openStart, end)
             }
         }
     }
 
     /** The chord sequence including the chord still sounding. */
     private fun currentSegments(): List<ChordSegment> {
-        val now = (hopIndex * hopSeconds).toFloat()
         val chord = openChord
-        if (chord == null || now <= openStart) return segments
-        return segments + ChordSegment(chord, openStart, now)
+        if (chord == null || openEnd <= openStart) return segments
+        return segments + ChordSegment(chord, openStart, openEnd)
     }
 
     private fun updateSongKey() {
@@ -273,11 +330,15 @@ class MusicAnalyzer(
         val estimate = tempoTracker.estimate()
         if (estimate == null || estimate.strength < 0.12) {
             // Keep the last tempo briefly through a quiet bar, then let go.
-            if (++tempoAbsentRuns > 6) { tempo = null; shownMeter = null; meterCandidate = null }
+            if (++tempoAbsentRuns > 6) { tempo = null; shownMeter = null; meterCandidate = null; beatPeriodHops = 0.0; lastGridIndex = Long.MIN_VALUE }
             return
         }
         tempoAbsentRuns = 0
         tempo = estimate
+        if (estimate.locked) {
+            beatAnchorHop = hopIndex - estimate.lastBeatFramesAgo
+            beatPeriodHops = estimate.periodFrames
+        }
 
         val meter = meterDetector.analyze(
             tempoTracker.detrended, tempoTracker.detrendedLength,
@@ -328,7 +389,7 @@ class MusicAnalyzer(
             meterConfidence = m?.confidence?.toFloat() ?: 0f,
             lastBeatIndexInBar = if (m != null) shownMeterIndex else 0,
             meterScores = m?.scores?.mapValues { it.value.toFloat() } ?: emptyMap(),
-            currentChord = chordDetector.current,
+            currentChord = currentChord,
             chordSegments = currentSegments(),
             chordShares = chordShares,
             songKey = songKey,

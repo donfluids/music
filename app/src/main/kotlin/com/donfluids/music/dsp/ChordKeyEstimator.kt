@@ -2,6 +2,7 @@ package com.donfluids.music.dsp
 
 import com.donfluids.music.music.ChordLabel
 import com.donfluids.music.music.ChordSegment
+import com.donfluids.music.music.ChordType
 import com.donfluids.music.music.Key
 import com.donfluids.music.music.Mode
 
@@ -52,7 +53,13 @@ object ChordKeyEstimator {
 
     fun weight(key: Key, chord: ChordLabel): Double {
         val interval = Math.floorMod(chord.root - key.tonic, 12)
-        return if (key.mode == Mode.MAJOR) majorWeight(interval, chord.minor) else minorWeight(interval, chord.minor)
+        val base = if (key.mode == Mode.MAJOR) majorWeight(interval, chord.minor) else minorWeight(interval, chord.minor)
+        // Suspended chords say less about mode; a dominant seventh on V says more.
+        return when {
+            chord.type.isSus -> base * 0.8
+            chord.type == ChordType.DOMINANT_SEVENTH && interval == 7 -> base + 0.1
+            else -> base
+        }
     }
 
     private fun isTonic(key: Key, chord: ChordLabel) =

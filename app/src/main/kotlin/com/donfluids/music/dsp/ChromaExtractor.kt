@@ -12,17 +12,20 @@ import kotlin.math.sqrt
 /**
  * Turns a block of audio into a 12-bin pitch-class profile ("chroma") and accumulates it over time.
  *
- * Instead of mapping every FFT bin to a pitch class (which smears neighbouring semitones in the
- * bass), only spectral peaks are used. Each peak's frequency is refined by parabolic interpolation
- * so it lands on the right semitone even where FFT bins are coarser than a semitone.
+ * Two spectra are used. A long window ([bassFftSize], about 370 ms) resolves the bass, where
+ * neighbouring semitones are only a few hertz apart; a shorter one ([fftSize], about 190 ms)
+ * follows chord changes above [bassCrossoverHz]. Only spectral peaks are used, with their
+ * frequency refined by parabolic interpolation, so a note lands on one pitch class instead of
+ * smearing across two bins.
  *
- * The same peaks also give a tuning estimate: how many cents the singers are sharp or flat of
- * A4 = [referenceHz]. That matters for an impromptu song, where the congregation often lands
- * somewhere between two keys.
+ * The same peaks give a tuning estimate: how many cents the singers are sharp or flat of
+ * A4 = [referenceHz].
  */
 class ChromaExtractor(
     private val sampleRate: Int,
     val fftSize: Int = 8192,
+    val bassFftSize: Int = 16384,
+    private val bassCrossoverHz: Double = 260.0,
     private val referenceHz: Double = 440.0,
     /** Time constant (seconds) of the exponential memory used for key estimation. */
     private val memorySeconds: Double = 8.0,
@@ -31,14 +34,38 @@ class ChromaExtractor(
     /** Peaks above this frequency are weighted down in proportion, to tame high overtones. */
     private val rollOffHz: Double = 1000.0,
 ) {
-    private val fft = Fft(fftSize)
-    private val window = Fft.hannWindow(fftSize)
-    private val re = FloatArray(fftSize)
-    private val im = FloatArray(fftSize)
-    private val mag = FloatArray(fftSize / 2 + 1)
-    private val binHz = sampleRate.toDouble() / fftSize
-    private val minBin = (minHz / binHz).toInt().coerceAtLeast(2)
-    private val maxBin = (maxHz / binHz).toInt().coerceAtMost(fftSize / 2 - 2)
+    /** Samples the caller must provide before the analysis point. */
+    val windowSamples: Int get() = maxOf(fftSize, bassFftSize)
+
+    private inner class Spectrum(val size: Int) {
+        val fft = Fft(size)
+        val window = Fft.hannWindow(size)
+        val re = FloatArray(size)
+        val im = FloatArray(size)
+        val mag = FloatArray(size / 2 + 1)
+        val binHz = sampleRate.toDouble() / size
+        private val sortScratch = FloatArray(size / 2 + 1)
+
+        fun compute(buffer: FloatArray, end: Int) {
+            val start = end - size
+            for (i in 0 until size) { re[i] = buffer[start + i] * window[i]; im[i] = 0f }
+            fft.transform(re, im)
+            val scale = 2f / size
+            for (k in 0..size / 2) mag[k] = sqrt(re[k] * re[k] + im[k] * im[k]) * scale
+        }
+
+        /** Median magnitude between two bins: a cheap noise-floor estimate. */
+        fun noiseFloor(minBin: Int, maxBin: Int): Float {
+            val n = maxBin - minBin + 1
+            if (n <= 0) return 0f
+            System.arraycopy(mag, minBin, sortScratch, 0, n)
+            java.util.Arrays.sort(sortScratch, 0, n)
+            return sortScratch[n / 2]
+        }
+    }
+
+    private val main = Spectrum(fftSize)
+    private val bass = Spectrum(bassFftSize)
 
     /** Chroma of the most recent frame only. */
     val frameChroma = FloatArray(12)
@@ -46,15 +73,15 @@ class ChromaExtractor(
     /** Exponentially-decayed chroma used for key finding. */
     val accumulatedChroma = FloatArray(12)
 
-    /** Weighted circular mean of tuning deviation, accumulated as a 2-D vector. */
     private var tuningX = 0.0
     private var tuningY = 0.0
+    private var frameX = 0.0
+    private var frameY = 0.0
+    private var frameWeight = 0.0
 
     /** Sum of frame energy seen so far (decayed). Used to judge whether we have heard anything. */
     var accumulatedWeight = 0.0
         private set
-
-    private var frameCount = 0
 
     fun reset() {
         accumulatedChroma.fill(0f)
@@ -62,13 +89,9 @@ class ChromaExtractor(
         tuningX = 0.0
         tuningY = 0.0
         accumulatedWeight = 0.0
-        frameCount = 0
     }
 
-    /**
-     * Estimated tuning offset of the music relative to [referenceHz], in cents (-50..50).
-     * Positive means sharp. Returns 0 until enough sound has been heard.
-     */
+    /** Estimated tuning offset relative to [referenceHz], in cents (-50..50). Positive is sharp. */
     fun tuningOffsetCents(): Double {
         val r = sqrt(tuningX * tuningX + tuningY * tuningY)
         if (r < 1e-9) return 0.0
@@ -82,66 +105,53 @@ class ChromaExtractor(
     }
 
     /**
-     * Analyse [fftSize] samples starting at [offset] in [buffer].
-     * [hopSeconds] is the time since the previous call, used for the exponential decay.
+     * Analyse the audio ending at index [end] (exclusive) in [buffer]; at least [windowSamples]
+     * samples must precede it. [hopSeconds] is the time since the previous call.
      */
-    fun process(buffer: FloatArray, offset: Int, hopSeconds: Double) {
-        for (i in 0 until fftSize) {
-            re[i] = buffer[offset + i] * window[i]
-            im[i] = 0f
-        }
-        fft.transform(re, im)
-        val scale = 2f / fftSize
-        for (k in 0..fftSize / 2) {
-            mag[k] = sqrt(re[k] * re[k] + im[k] * im[k]) * scale
-        }
+    fun process(buffer: FloatArray, end: Int, hopSeconds: Double) {
+        main.compute(buffer, end)
+        bass.compute(buffer, end)
 
         frameChroma.fill(0f)
-        val threshold = noiseFloor() * 4f
-        var frameWeight = 0.0
-        var fx = 0.0
-        var fy = 0.0
+        frameWeight = 0.0
+        frameX = 0.0
+        frameY = 0.0
+        collectPeaks(bass, minHz, bassCrossoverHz)
+        collectPeaks(main, bassCrossoverHz, maxHz)
 
+        val decay = exp(-hopSeconds / memorySeconds)
+        for (i in 0 until 12) accumulatedChroma[i] = (accumulatedChroma[i] * decay + frameChroma[i]).toFloat()
+        tuningX = tuningX * decay + frameX
+        tuningY = tuningY * decay + frameY
+        accumulatedWeight = accumulatedWeight * decay + frameWeight
+    }
+
+    private fun collectPeaks(s: Spectrum, fromHz: Double, toHz: Double) {
+        val minBin = (fromHz / s.binHz).toInt().coerceAtLeast(2)
+        val maxBin = (toHz / s.binHz).toInt().coerceAtMost(s.size / 2 - 2)
+        if (maxBin <= minBin) return
+        val threshold = s.noiseFloor(minBin, maxBin) * 4f
+        val mag = s.mag
         for (k in minBin..maxBin) {
             val m = mag[k]
             if (m <= threshold || m <= mag[k - 1] || m < mag[k + 1]) continue
-            // Parabolic interpolation of the peak position in log-magnitude domain.
             val a = ln(mag[k - 1] + 1e-12f)
             val b = ln(m + 1e-12f)
             val c = ln(mag[k + 1] + 1e-12f)
             val denom = a - 2f * b + c
             val delta = if (denom.isFinite() && denom != 0f) (0.5f * (a - c) / denom).coerceIn(-0.5f, 0.5f) else 0f
-            val hz = (k + delta) * binHz
-            val semitone = 12.0 * log2(hz / referenceHz) // 0 = A4
+            val hz = (k + delta) * s.binHz
+            if (hz < fromHz || hz >= toHz) continue
+            val semitone = 12.0 * log2(hz / referenceHz)
             val nearest = semitone.roundToInt()
             val cents = (semitone - nearest) * 100.0
-            val pc = Math.floorMod(nearest + 9, 12) // A -> 9, so C -> 0
-
-            // De-emphasise the upper spectrum: high harmonics (5th, 7th ...) blur the key.
+            val pc = Math.floorMod(nearest + 9, 12)
             val weight = if (hz <= rollOffHz) m.toDouble() else m.toDouble() * (rollOffHz / hz)
             frameChroma[pc] += weight.toFloat()
             frameWeight += weight
             val angle = cents / 100.0 * 2.0 * Math.PI
-            fx += weight * cos(angle)
-            fy += weight * sin(angle)
+            frameX += weight * cos(angle)
+            frameY += weight * sin(angle)
         }
-
-        val decay = exp(-hopSeconds / memorySeconds)
-        for (i in 0 until 12) {
-            accumulatedChroma[i] = (accumulatedChroma[i] * decay + frameChroma[i]).toFloat()
-        }
-        tuningX = tuningX * decay + fx
-        tuningY = tuningY * decay + fy
-        accumulatedWeight = accumulatedWeight * decay + frameWeight
-        frameCount++
-    }
-
-    /** Median magnitude in the analysed band, a cheap noise-floor estimate. */
-    private val sortScratch = FloatArray(fftSize / 2 + 1)
-    private fun noiseFloor(): Float {
-        val n = maxBin - minBin + 1
-        System.arraycopy(mag, minBin, sortScratch, 0, n)
-        java.util.Arrays.sort(sortScratch, 0, n)
-        return sortScratch[n / 2]
     }
 }
