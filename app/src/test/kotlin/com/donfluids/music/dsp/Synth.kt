@@ -75,14 +75,18 @@ object Synth {
     }
 
     /** Feed audio through an analyser in realistic chunks and return the final result. */
-    fun analyze(audio: FloatArray, analyzer: MusicAnalyzer = MusicAnalyzer(SAMPLE_RATE)): AnalysisResult {
+    fun analyze(
+        audio: FloatArray,
+        analyzer: MusicAnalyzer = MusicAnalyzer(SAMPLE_RATE),
+        onPublish: ((AnalysisResult) -> Unit)? = null,
+    ): AnalysisResult {
         val chunk = 1024
         var i = 0
         while (i < audio.size) {
             val n = minOf(chunk, audio.size - i)
             val buf = audio.copyOfRange(i, i + n)
             val nowNanos = ((i + n).toDouble() / SAMPLE_RATE * 1e9).toLong()
-            analyzer.process(buf, n, nowNanos)
+            if (analyzer.process(buf, n, nowNanos)) onPublish?.invoke(analyzer.result)
             i += n
         }
         return analyzer.result

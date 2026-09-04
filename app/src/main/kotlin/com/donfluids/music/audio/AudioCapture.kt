@@ -11,15 +11,18 @@ import android.os.Process
 /**
  * Pulls mono PCM from the microphone on a dedicated thread and hands it to [listener]
  * as floats in -1..1, together with the System.nanoTime() of the newest sample.
+ *
+ * Any failure on the capture thread (the microphone taken by a call, a dead audio server,
+ * an exception in the listener) ends capture and is reported once through [onError].
  */
 class AudioCapture(
     private val context: Context,
     private val listener: (samples: FloatArray, count: Int, nowNanos: Long) -> Unit,
+    private val onError: (message: String) -> Unit,
 ) {
     var sampleRate: Int = 0
         private set
 
-    private var record: AudioRecord? = null
     private var thread: Thread? = null
     @Volatile private var running = false
 
@@ -34,7 +37,11 @@ class AudioCapture(
             val minBuffer = AudioRecord.getMinBufferSize(candidate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             if (minBuffer <= 0) continue
             val bufferBytes = maxOf(minBuffer * 2, candidate / 2 * 2) // at least half a second
-            val r = AudioRecord(source, candidate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferBytes)
+            val r = try {
+                AudioRecord(source, candidate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferBytes)
+            } catch (e: Exception) {
+                continue
+            }
             if (r.state == AudioRecord.STATE_INITIALIZED) {
                 opened = r
                 rate = candidate
@@ -44,33 +51,47 @@ class AudioCapture(
         }
         val r = opened ?: throw IllegalStateException("Could not open the microphone")
         sampleRate = rate
-        record = r
         running = true
         thread = Thread({ loop(r) }, "LiveKey-audio").also { it.start() }
     }
 
+    /** Stops capture and waits briefly for the thread to finish. The thread releases the recorder. */
     fun stop() {
         running = false
         thread?.join(1000)
         thread = null
-        record?.let {
-            runCatching { it.stop() }
-            it.release()
-        }
-        record = null
     }
 
     private fun loop(r: AudioRecord) {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val shorts = ShortArray(1024)
         val floats = FloatArray(shorts.size)
-        r.startRecording()
-        while (running) {
-            val n = r.read(shorts, 0, shorts.size)
-            if (n <= 0) continue
-            val now = System.nanoTime()
-            for (i in 0 until n) floats[i] = shorts[i] / 32768f
-            listener(floats, n, now)
+        var emptyReads = 0
+        try {
+            r.startRecording()
+            if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                throw IllegalStateException("The microphone is in use by another app")
+            }
+            while (running) {
+                val n = r.read(shorts, 0, shorts.size)
+                if (n < 0) throw IllegalStateException("Microphone read failed ($n)")
+                if (n == 0) {
+                    if (++emptyReads > 200) throw IllegalStateException("The microphone stopped delivering audio")
+                    continue
+                }
+                emptyReads = 0
+                val now = System.nanoTime()
+                for (i in 0 until n) floats[i] = shorts[i] / 32768f
+                listener(floats, n, now)
+            }
+        } catch (t: Throwable) {
+            if (running) {
+                running = false
+                onError(t.message ?: "Microphone error")
+            }
+        } finally {
+            runCatching { r.stop() }
+            r.release()
         }
     }
 

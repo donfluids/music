@@ -1,21 +1,30 @@
 package com.donfluids.music.audio
 
+import java.io.BufferedOutputStream
 import java.io.Closeable
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 
-/** Streams 16-bit mono PCM to a WAV file. Plain JVM so it can be unit-tested. */
+/**
+ * Streams 16-bit mono PCM to a WAV file through a buffered stream; the header is patched on
+ * close. Plain JVM so it can be unit-tested. Not thread-safe: use from one thread.
+ */
 class WavWriter(val file: File, private val sampleRate: Int) : Closeable {
-    private val raf = RandomAccessFile(file, "rw")
+    private val out: BufferedOutputStream
     private val buffer = ByteArray(8192)
     private var bytesWritten = 0L
+    private var closed = false
 
     /** Samples written so far. */
     val sampleCount: Long get() = bytesWritten / 2
 
     init {
-        raf.setLength(0)
-        raf.write(ByteArray(HEADER_SIZE)) // placeholder, patched on close
+        RandomAccessFile(file, "rw").use { raf ->
+            raf.setLength(0)
+            raf.write(ByteArray(HEADER_SIZE)) // placeholder, patched on close
+        }
+        out = BufferedOutputStream(FileOutputStream(file, true), 64 * 1024)
     }
 
     /** Appends [count] samples in -1..1 from [samples]. */
@@ -28,16 +37,20 @@ class WavWriter(val file: File, private val sampleRate: Int) : Closeable {
                 buffer[2 * j] = (v and 0xFF).toByte()
                 buffer[2 * j + 1] = ((v shr 8) and 0xFF).toByte()
             }
-            raf.write(buffer, 0, n * 2)
+            out.write(buffer, 0, n * 2)
             bytesWritten += n * 2
             i += n
         }
     }
 
     override fun close() {
-        raf.seek(0)
-        raf.write(header(sampleRate, bytesWritten))
-        raf.close()
+        if (closed) return
+        closed = true
+        out.close()
+        RandomAccessFile(file, "rw").use { raf ->
+            raf.seek(0)
+            raf.write(header(sampleRate, bytesWritten))
+        }
     }
 
     companion object {
@@ -55,20 +68,25 @@ class WavWriter(val file: File, private val sampleRate: Int) : Closeable {
             return h
         }
 
-        /** Reads a 16-bit mono WAV written by this class (or any plain PCM WAV) back into floats. */
+        /** Reads a 16-bit PCM WAV back into floats (first channel only). */
         fun read(file: File): Pair<Int, FloatArray> {
             val bytes = file.readBytes()
             require(bytes.size >= HEADER_SIZE && String(bytes, 0, 4) == "RIFF") { "Not a WAV file: $file" }
             var pos = 12
             var sampleRate = 0
             var channels = 1
+            var bits = 16
+            var format = 1
             while (pos + 8 <= bytes.size) {
                 val id = String(bytes, pos, 4)
                 val size = le32(bytes, pos + 4)
                 if (id == "fmt ") {
+                    format = le16(bytes, pos + 8)
                     channels = le16(bytes, pos + 10)
                     sampleRate = le32(bytes, pos + 12)
+                    bits = le16(bytes, pos + 22)
                 } else if (id == "data") {
+                    require(format == 1 && bits == 16) { "Only 16-bit PCM WAV is supported: $file" }
                     val count = size / 2 / channels
                     val out = FloatArray(count)
                     for (i in 0 until count) {

@@ -17,13 +17,18 @@ class ClipStore(context: Context) {
     fun clipNames(): List<String> =
         dir.listFiles { f -> f.name.endsWith(".wav") }?.map { it.nameWithoutExtension }?.sorted() ?: emptyList()
 
+    /** Removes leftovers of clips interrupted by a crash. Call once at startup, off the main thread. */
+    fun cleanUp() {
+        dir.listFiles { f -> f.name.endsWith(".part") }?.forEach { it.delete() }
+    }
+
     fun count(): Int = clipNames().size
 
     /** Writes the user's answer for one clip into its sidecar. Empty fields are left out. */
     fun saveLabels(clipName: String, key: String, tempo: String, meter: String, notes: String) {
         val file = File(dir, "$clipName.json")
         if (!file.exists()) return
-        val json = JSONObject(file.readText())
+        val json = runCatching { JSONObject(file.readText()) }.getOrElse { JSONObject() }
         val labels = JSONObject()
         if (key.isNotBlank()) labels.put("key", key.trim())
         if (tempo.isNotBlank()) labels.put("tempo", tempo.trim())
@@ -38,7 +43,7 @@ class ClipStore(context: Context) {
         shareDir.mkdirs()
         val zip = File(shareDir, "livekey-clips.zip")
         ZipOutputStream(FileOutputStream(zip).buffered()).use { out ->
-            dir.listFiles()?.sortedBy { it.name }?.forEach { f ->
+            dir.listFiles { f -> f.name.endsWith(".wav") || f.name.endsWith(".json") }?.sortedBy { it.name }?.forEach { f ->
                 out.putNextEntry(ZipEntry(f.name))
                 FileInputStream(f).use { it.copyTo(out) }
                 out.closeEntry()

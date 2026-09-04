@@ -104,6 +104,10 @@ class MusicAnalyzer(
 
     private var tempoAbsentRuns = 0
 
+    /** Absolute time of a tracked beat and the beat period, fixed when the estimate was made. */
+    private var beatAnchorNanos = 0L
+    private var beatPeriodNanos = 0.0
+
     // Song mode: the chord sequence since the last reset.
     private val segments = ArrayList<ChordSegment>()
     private var openChord: ChordLabel? = null
@@ -147,6 +151,17 @@ class MusicAnalyzer(
         meterCandidateHits = 0
         shownMeter = null
         tempoAbsentRuns = 0
+        tempo = null
+        pendingKey = null
+        pendingKeyConfidence = 0f
+        pendingAlternatives = emptyList()
+        shownMeterIndex = 0
+        beatAnchorHop = 0.0
+        beatAnchorNanos = 0L
+        beatPeriodNanos = 0.0
+        openEnd = 0f
+        levelRms = 0.0
+        levelSamples = 0
         chordTracker.reset()
         segments.clear()
         openChord = null
@@ -335,6 +350,8 @@ class MusicAnalyzer(
         }
         tempoAbsentRuns = 0
         tempo = estimate
+        beatAnchorNanos = hopEndNanos - (estimate.lastBeatFramesAgo * hopSeconds * 1e9).toLong()
+        beatPeriodNanos = estimate.periodFrames * hopSeconds * 1e9
         if (estimate.locked) {
             beatAnchorHop = hopIndex - estimate.lastBeatFramesAgo
             beatPeriodHops = estimate.periodFrames
@@ -369,6 +386,17 @@ class MusicAnalyzer(
         val m = shownMeter
         // For uneven meters the counted pulse is a subdivision of the tracked beat.
         val divisor = m?.pulseDivisor ?: 1
+        val countedPeriodNanos = beatPeriodNanos / divisor
+        // The beat anchor is fixed when the tempo was estimated; step forward from it in whole
+        // beats so the published beat is always the latest one at or before now, and the bar
+        // position advances with it.
+        var lastBeatAt = 0L
+        var beatsSinceAnchor = 0L
+        if (t != null && countedPeriodNanos > 0.0) {
+            beatsSinceAnchor = Math.floorDiv(hopEndNanos - beatAnchorNanos, countedPeriodNanos.toLong().coerceAtLeast(1L))
+            lastBeatAt = beatAnchorNanos + (beatsSinceAnchor * countedPeriodNanos).toLong()
+        }
+        val beatIndex = if (m != null) Math.floorMod(shownMeterIndex + beatsSinceAnchor, m.beatsPerBar.toLong()).toInt() else 0
         result = AnalysisResult(
             secondsHeard = (hopIndex * hopSeconds).toFloat(),
             level = level,
@@ -381,13 +409,13 @@ class MusicAnalyzer(
             bpm = t?.let { (it.bpm * divisor).toFloat() },
             tempoStrength = t?.strength?.toFloat() ?: 0f,
             tempoLocked = t?.locked ?: false,
-            beatPeriodMillis = t?.let { (it.periodFrames / divisor * hopSeconds * 1000.0).toFloat() } ?: 0f,
-            lastBeatAtNanos = t?.let { hopEndNanos - (it.lastBeatFramesAgo * hopSeconds * 1e9).toLong() } ?: 0L,
+            beatPeriodMillis = if (t != null) (countedPeriodNanos / 1e6).toFloat() else 0f,
+            lastBeatAtNanos = lastBeatAt,
             meterLabel = m?.label,
             beatsPerBar = m?.beatsPerBar ?: 0,
             meterCompound = m?.compound ?: false,
             meterConfidence = m?.confidence?.toFloat() ?: 0f,
-            lastBeatIndexInBar = if (m != null) shownMeterIndex else 0,
+            lastBeatIndexInBar = beatIndex,
             meterScores = m?.scores?.mapValues { it.value.toFloat() } ?: emptyMap(),
             currentChord = currentChord,
             chordSegments = currentSegments(),

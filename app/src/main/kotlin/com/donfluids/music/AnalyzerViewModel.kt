@@ -3,6 +3,9 @@ package com.donfluids.music
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import com.donfluids.music.audio.AudioCapture
 import com.donfluids.music.audio.ClipRecorder
@@ -18,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 data class UiState(
     val listening: Boolean = false,
@@ -37,6 +41,12 @@ data class UiState(
     val shareFile: File? = null,
 )
 
+/**
+ * Owns the microphone session. Threading rules: the audio thread reads [analyzer] and
+ * [recorder] and never blocks on files; the main thread never mutates an analyser in use
+ * (it swaps in a new one instead); clip hand-over is a compare-and-set so only one side
+ * finishes a clip.
+ */
 class AnalyzerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences("livekey", Context.MODE_PRIVATE)
@@ -46,25 +56,40 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         UiState(
             preset = AnalysisPreset.byId(prefs.getString(PREF_PRESET, null)),
             darkTheme = if (prefs.contains(PREF_DARK)) prefs.getBoolean(PREF_DARK, false) else null,
-            clipCount = clips.count(),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    /** Read on the audio thread, replaced on the main thread when the preset changes. */
     @Volatile
     private var analyzer: MusicAnalyzer? = null
-    @Volatile
-    private var recorder: ClipRecorder? = null
+    private val recorder = AtomicReference<ClipRecorder?>(null)
     private var capture: AudioCapture? = null
-    private var lastReportedSecond = -1
+    @Volatile private var lastReportedSecond = -1
+
+    /** The microphone is released whenever the app leaves the foreground. */
+    private val lifecycleObserver = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_STOP) stop()
+    }
+
+    init {
+        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
+        viewModelScope.launch(Dispatchers.IO) {
+            clips.cleanUp()
+            val count = clips.count()
+            _state.update { it.copy(clipCount = count) }
+        }
+    }
 
     fun start() {
         if (_state.value.listening) return
-        val cap = AudioCapture(getApplication()) { samples, count, now -> onAudio(samples, count, now) }
+        val cap = AudioCapture(
+            getApplication(),
+            listener = { samples, count, now -> onAudio(samples, count, now) },
+            onError = { message -> onCaptureError(message) },
+        )
         try {
             cap.start()
-        } catch (e: IllegalStateException) {
+        } catch (e: Exception) {
             _state.update { it.copy(error = e.message ?: "Could not open the microphone") }
             return
         }
@@ -77,7 +102,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     private fun onAudio(samples: FloatArray, count: Int, now: Long) {
         val a = analyzer ?: return
         val changed = a.process(samples, count, now)
-        val r = recorder
+        val r = recorder.get()
         if (r != null) {
             r.write(samples, count)
             if (changed) r.noteResult(a.result)
@@ -91,16 +116,25 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         if (changed) _state.update { it.copy(analysis = a.result) }
     }
 
-    fun stop() {
-        recorder?.let { finishClip(it) }
-        capture?.stop()
+    /** Runs on the audio thread, once, after which that thread exits on its own. */
+    private fun onCaptureError(message: String) {
+        recorder.get()?.let { finishClip(it) }
         capture = null
+        _state.update { it.copy(listening = false, error = message) }
+    }
+
+    fun stop() {
+        val cap = capture ?: return
+        capture = null
+        cap.stop() // the audio thread is done before the clip is finished
+        recorder.get()?.let { finishClip(it) }
         _state.update { it.copy(listening = false) }
     }
 
-    /** Forget everything heard so far: use when the next song starts. */
+    /** Forget everything heard so far: a fresh analyser replaces the old one, never mutated in place. */
     fun reset() {
-        analyzer?.reset()
+        val cap = capture
+        if (cap != null) analyzer = MusicAnalyzer(cap.sampleRate, _state.value.preset)
         _state.update { it.copy(analysis = AnalysisResult(), tempoMultiplier = 1f) }
     }
 
@@ -117,7 +151,6 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(tempoMultiplier = multiplier) }
     }
 
-    /** Switches between light and dark, starting from whatever is currently shown. */
     fun setDarkTheme(dark: Boolean) {
         prefs.edit().putBoolean(PREF_DARK, dark).apply()
         _state.update { it.copy(darkTheme = dark) }
@@ -131,29 +164,37 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
 
     fun startClip() {
         val cap = capture ?: return
-        if (recorder != null) return
+        val a = analyzer ?: return
         lastReportedSecond = -1
-        recorder = ClipRecorder(clips.dir, cap.sampleRate, _state.value.preset)
-        _state.update { it.copy(recording = true, recordingSeconds = 0) }
+        val r = ClipRecorder(
+            dir = clips.dir,
+            sampleRate = cap.sampleRate,
+            preset = _state.value.preset,
+            analysisStartSeconds = a.result.secondsHeard,
+            onError = { message -> _state.update { it.copy(error = message) } },
+        )
+        if (!recorder.compareAndSet(null, r)) {
+            r.finish(AnalysisResult())
+            return
+        }
+        _state.update { it.copy(recording = true, recordingSeconds = 0, error = null) }
     }
 
     fun stopClip() {
-        recorder?.let { finishClip(it) }
+        recorder.get()?.let { finishClip(it) }
     }
 
+    /** Whichever thread wins the compare-and-set finishes the clip; the other returns. */
     private fun finishClip(r: ClipRecorder) {
-        if (recorder !== r) return
-        recorder = null
+        if (!recorder.compareAndSet(r, null)) return
         r.finish(analyzer?.result ?: AnalysisResult())
-        _state.update {
-            it.copy(recording = false, recordingSeconds = 0, clipCount = clips.count(), clipAwaitingLabels = r.name)
-        }
+        _state.update { it.copy(recording = false, recordingSeconds = 0, clipCount = it.clipCount + 1, clipAwaitingLabels = r.name) }
     }
 
     fun saveLabels(key: String, tempo: String, meter: String, notes: String) {
         val name = _state.value.clipAwaitingLabels ?: return
-        clips.saveLabels(name, key, tempo, meter, notes)
         _state.update { it.copy(clipAwaitingLabels = null) }
+        viewModelScope.launch(Dispatchers.IO) { runCatching { clips.saveLabels(name, key, tempo, meter, notes) } }
     }
 
     fun skipLabels() {
@@ -162,8 +203,9 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
 
     fun shareClips() {
         viewModelScope.launch {
-            val zip = withContext(Dispatchers.IO) { clips.zipAll() }
-            _state.update { it.copy(shareFile = zip) }
+            val zip = withContext(Dispatchers.IO) { runCatching { clips.zipAll() } }
+            zip.onSuccess { file -> _state.update { it.copy(shareFile = file) } }
+                .onFailure { e -> _state.update { it.copy(error = "Could not prepare the clips: ${e.message}") } }
         }
     }
 
@@ -172,11 +214,15 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun deleteClips() {
-        clips.deleteAll()
-        _state.update { it.copy(clipCount = 0) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { clips.deleteAll() }
+            val count = clips.count()
+            _state.update { it.copy(clipCount = count) }
+        }
     }
 
     override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
         stop()
     }
 

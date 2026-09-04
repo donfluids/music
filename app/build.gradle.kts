@@ -70,6 +70,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
@@ -78,4 +79,11 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
+}
+
+// Forward -Pclips.dir=<folder> to the test JVM so ClipReplayTest can find recorded clips.
+val clipsDir = providers.gradleProperty("clips.dir")
+tasks.withType<Test>().configureEach {
+    if (clipsDir.isPresent) systemProperty("clips.dir", clipsDir.get())
 }
