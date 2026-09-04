@@ -159,6 +159,7 @@ class MusicAnalyzer(
         beatAnchorHop = 0.0
         beatAnchorNanos = 0L
         beatPeriodNanos = 0.0
+        hopEndNanos = 0L
         openEnd = 0f
         levelRms = 0.0
         levelSamples = 0
@@ -350,8 +351,17 @@ class MusicAnalyzer(
         }
         tempoAbsentRuns = 0
         tempo = estimate
+        val previousAnchor = beatAnchorNanos
+        val previousCountedPeriod = beatPeriodNanos / (shownMeter?.pulseDivisor ?: 1)
         beatAnchorNanos = hopEndNanos - (estimate.lastBeatFramesAgo * hopSeconds * 1e9).toLong()
         beatPeriodNanos = estimate.periodFrames * hopSeconds * 1e9
+        // Carry the bar position forward to the new anchor, so it stays right even if the
+        // meter analysis below has nothing new to say.
+        val m0 = shownMeter
+        if (m0 != null && previousCountedPeriod > 0.0) {
+            val advanced = Math.round((beatAnchorNanos - previousAnchor) / previousCountedPeriod)
+            shownMeterIndex = Math.floorMod(shownMeterIndex + advanced, m0.beatsPerBar.toLong()).toInt()
+        }
         if (estimate.locked) {
             beatAnchorHop = hopIndex - estimate.lastBeatFramesAgo
             beatPeriodHops = estimate.periodFrames

@@ -67,10 +67,10 @@ choose **Delete clips**. Nothing is uploaded unless you share it.
 To replay clips through the analyser on a computer, unzip them and run:
 
 ```
-./gradlew :app:testDebugUnitTest --tests '*ClipReplayTest*' -Pclips.dir=/path/to/clips -i
+./gradlew :app:testDebugUnitTest --tests '*ClipReplayTest*' -Pclips.dir=/path/to/clips -i --rerun
 ```
 
-It prints, for every clip and every preset, what the app decided next to your labels.
+It prints, for every clip and every preset, what the app decided next to your labels. The `--rerun` flag matters: without it Gradle treats a second run on the same folder as already done and prints nothing.
 
 ## How it works
 

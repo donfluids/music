@@ -11,6 +11,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -30,7 +31,7 @@ class ClipRecorder(
     dir: File,
     private val sampleRate: Int,
     private val preset: AnalysisPreset,
-    private val analysisStartSeconds: Float,
+    @Volatile var analysisStartSeconds: Float,
     private val maxSeconds: Double = 60.0,
     private val onError: (String) -> Unit = {},
 ) {
@@ -69,17 +70,26 @@ class ClipRecorder(
         if (closed.get() || failed || full) return
         val copy = samples.copyOf(count)
         submitted.addAndGet(count.toLong())
-        executor.execute {
-            val w = writer ?: return@execute
+        submit {
+            val w = writer ?: return@submit
             try {
                 w.write(copy, count)
-            } catch (e: IOException) {
+            } catch (e: Exception) {
                 fail(e)
             }
         }
     }
 
-    /** Notes what the analyser currently thinks, at most twice a second. Any thread. */
+    /** Runs [task] on the recorder thread; a task arriving after [finish] is dropped. */
+    private fun submit(task: () -> Unit) {
+        try {
+            executor.execute(task)
+        } catch (_: RejectedExecutionException) {
+            // finish() shut the executor down between our closed-check and here.
+        }
+    }
+
+    /** Notes what the analyser currently thinks, at most twice a second. Audio thread only. */
     fun noteResult(result: AnalysisResult) {
         if (closed.get() || failed) return
         val t = seconds
@@ -93,30 +103,48 @@ class ClipRecorder(
             .put("meter", result.meterLabel)
             .put("meterConfidence", round(result.meterConfidence))
             .put("chord", result.currentChord?.toString())
-        executor.execute { timeline.put(entry) }
+        submit { timeline.put(entry) }
     }
 
     /**
      * Closes the WAV, writes the sidecar and renames the clip into place, all on the recorder
-     * thread. Returns at once. Safe to call more than once.
+     * thread. Returns at once; [onDone] is called on the recorder thread with true if the clip
+     * was saved. Safe to call more than once (later calls are ignored).
      */
-    fun finish(finalResult: AnalysisResult) {
+    fun finish(finalResult: AnalysisResult, onDone: (saved: Boolean) -> Unit = {}) {
         if (!closed.compareAndSet(false, true)) return
         executor.execute {
+            val w = writer
+            writer = null // late write tasks, if any slipped in, find nothing to write to
+            var saved = false
             try {
-                val w = writer
                 if (w == null || failed) {
+                    runCatching { w?.close() }
                     partFile.delete()
-                    return@execute
+                } else {
+                    w.close()
+                    jsonFile.writeText(sidecar(finalResult, w.sampleCount.toDouble() / sampleRate).toString(2))
+                    if (!partFile.renameTo(wavFile)) throw IOException("Could not finalise ${wavFile.name}")
+                    saved = true
                 }
-                w.close()
-                jsonFile.writeText(sidecar(finalResult, w.sampleCount.toDouble() / sampleRate).toString(2))
-                if (!partFile.renameTo(wavFile)) throw IOException("Could not finalise ${wavFile.name}")
             } catch (e: Exception) {
                 fail(e)
+                runCatching { w?.close() }
                 partFile.delete()
                 jsonFile.delete()
             }
+            onDone(saved)
+        }
+        executor.shutdown()
+    }
+
+    /** Throws the clip away without saving anything. */
+    fun discard() {
+        if (!closed.compareAndSet(false, true)) return
+        executor.execute {
+            runCatching { writer?.close() }
+            writer = null
+            partFile.delete()
         }
         executor.shutdown()
     }

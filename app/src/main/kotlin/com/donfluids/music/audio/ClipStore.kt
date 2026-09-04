@@ -17,9 +17,13 @@ class ClipStore(context: Context) {
     fun clipNames(): List<String> =
         dir.listFiles { f -> f.name.endsWith(".wav") }?.map { it.nameWithoutExtension }?.sorted() ?: emptyList()
 
-    /** Removes leftovers of clips interrupted by a crash. Call once at startup, off the main thread. */
+    /**
+     * Removes leftovers of clips interrupted by a crash. Call once at startup, off the main
+     * thread. Files still being written in the last two minutes are left alone.
+     */
     fun cleanUp() {
-        dir.listFiles { f -> f.name.endsWith(".part") }?.forEach { it.delete() }
+        val cutoff = System.currentTimeMillis() - 2 * 60 * 1000
+        dir.listFiles { f -> f.name.endsWith(".part") && f.lastModified() < cutoff }?.forEach { it.delete() }
     }
 
     fun count(): Int = clipNames().size

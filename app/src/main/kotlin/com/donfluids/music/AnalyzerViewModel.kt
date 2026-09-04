@@ -60,10 +60,13 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /** One microphone session: its capture thread only ever sees its own analyser. */
+    private class Session(val capture: AudioCapture, @Volatile var analyzer: MusicAnalyzer)
+
     @Volatile
-    private var analyzer: MusicAnalyzer? = null
+    private var session: Session? = null
+    private val analyzer: MusicAnalyzer? get() = session?.analyzer
     private val recorder = AtomicReference<ClipRecorder?>(null)
-    private var capture: AudioCapture? = null
     @Volatile private var lastReportedSecond = -1
 
     /** The microphone is released whenever the app leaves the foreground. */
@@ -81,11 +84,14 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun start() {
-        if (_state.value.listening) return
+        if (_state.value.listening || session != null) return
+        // The capture thread may deliver audio before the session object exists; the holder
+        // is an AtomicReference so the assignment is visible to it as soon as it is made.
+        val holder = AtomicReference<Session?>(null)
         val cap = AudioCapture(
             getApplication(),
-            listener = { samples, count, now -> onAudio(samples, count, now) },
-            onError = { message -> onCaptureError(message) },
+            listener = { samples, count, now -> holder.get()?.let { onAudio(it, samples, count, now) } },
+            onError = { message -> holder.get()?.let { onCaptureError(it, message) } },
         )
         try {
             cap.start()
@@ -93,14 +99,15 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             _state.update { it.copy(error = e.message ?: "Could not open the microphone") }
             return
         }
-        analyzer = MusicAnalyzer(cap.sampleRate, _state.value.preset)
-        capture = cap
+        val newSession = Session(cap, MusicAnalyzer(cap.sampleRate, _state.value.preset))
+        holder.set(newSession)
+        session = newSession
         _state.update { it.copy(listening = true, error = null, analysis = AnalysisResult()) }
     }
 
-    /** Runs on the audio thread. */
-    private fun onAudio(samples: FloatArray, count: Int, now: Long) {
-        val a = analyzer ?: return
+    /** Runs on the audio thread of [s]; a stale thread only ever touches its own session. */
+    private fun onAudio(s: Session, samples: FloatArray, count: Int, now: Long) {
+        val a = s.analyzer
         val changed = a.process(samples, count, now)
         val r = recorder.get()
         if (r != null) {
@@ -117,24 +124,25 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Runs on the audio thread, once, after which that thread exits on its own. */
-    private fun onCaptureError(message: String) {
+    private fun onCaptureError(s: Session, message: String) {
+        if (session !== s) return
+        session = null
         recorder.get()?.let { finishClip(it) }
-        capture = null
         _state.update { it.copy(listening = false, error = message) }
     }
 
     fun stop() {
-        val cap = capture ?: return
-        capture = null
-        cap.stop() // the audio thread is done before the clip is finished
+        val s = session ?: return
+        session = null
+        s.capture.stop() // the audio thread is done before the clip is finished
         recorder.get()?.let { finishClip(it) }
         _state.update { it.copy(listening = false) }
     }
 
     /** Forget everything heard so far: a fresh analyser replaces the old one, never mutated in place. */
     fun reset() {
-        val cap = capture
-        if (cap != null) analyzer = MusicAnalyzer(cap.sampleRate, _state.value.preset)
+        session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, _state.value.preset) }
+        recorder.get()?.analysisStartSeconds = 0f // the clip's chord filter follows the new clock
         _state.update { it.copy(analysis = AnalysisResult(), tempoMultiplier = 1f) }
     }
 
@@ -142,8 +150,8 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     fun setPreset(preset: AnalysisPreset) {
         if (preset == _state.value.preset) return
         prefs.edit().putString(PREF_PRESET, preset.id).apply()
-        val cap = capture
-        if (cap != null) analyzer = MusicAnalyzer(cap.sampleRate, preset)
+        session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, preset) }
+        recorder.get()?.analysisStartSeconds = 0f
         _state.update { it.copy(preset = preset, analysis = AnalysisResult(), tempoMultiplier = 1f) }
     }
 
@@ -163,18 +171,18 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     // ---- Clips ----
 
     fun startClip() {
-        val cap = capture ?: return
-        val a = analyzer ?: return
+        val s = session ?: return
+        if (recorder.get() != null) return
         lastReportedSecond = -1
         val r = ClipRecorder(
             dir = clips.dir,
-            sampleRate = cap.sampleRate,
+            sampleRate = s.capture.sampleRate,
             preset = _state.value.preset,
-            analysisStartSeconds = a.result.secondsHeard,
+            analysisStartSeconds = s.analyzer.result.secondsHeard,
             onError = { message -> _state.update { it.copy(error = message) } },
         )
         if (!recorder.compareAndSet(null, r)) {
-            r.finish(AnalysisResult())
+            r.discard()
             return
         }
         _state.update { it.copy(recording = true, recordingSeconds = 0, error = null) }
@@ -187,8 +195,10 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     /** Whichever thread wins the compare-and-set finishes the clip; the other returns. */
     private fun finishClip(r: ClipRecorder) {
         if (!recorder.compareAndSet(r, null)) return
-        r.finish(analyzer?.result ?: AnalysisResult())
-        _state.update { it.copy(recording = false, recordingSeconds = 0, clipCount = it.clipCount + 1, clipAwaitingLabels = r.name) }
+        _state.update { it.copy(recording = false, recordingSeconds = 0) }
+        r.finish(analyzer?.result ?: AnalysisResult()) { saved ->
+            if (saved) _state.update { it.copy(clipCount = it.clipCount + 1, clipAwaitingLabels = r.name) }
+        }
     }
 
     fun saveLabels(key: String, tempo: String, meter: String, notes: String) {

@@ -80,6 +80,7 @@ class AudioCapture(
                     continue
                 }
                 emptyReads = 0
+                if (!running) break // stop() was called while read() was blocked
                 val now = System.nanoTime()
                 for (i in 0 until n) floats[i] = shorts[i] / 32768f
                 listener(floats, n, now)

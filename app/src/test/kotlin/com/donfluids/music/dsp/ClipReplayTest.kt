@@ -10,13 +10,13 @@ import java.io.File
  * the user entered. Not a pass/fail test: it is the tuning loop for the presets.
  *
  * Run with the folder of unzipped clips:
- *   ./gradlew :app:testDebugUnitTest --tests '*ClipReplayTest*' -Dclips.dir=/path/to/clips -i
+ *   ./gradlew :app:testDebugUnitTest --tests '*ClipReplayTest*' -Pclips.dir=/path/to/clips -i --rerun
  */
 class ClipReplayTest {
     @Test
     fun replayClips() {
         val dirName = System.getProperty("clips.dir")
-        assumeTrue("set -Dclips.dir=<folder> to replay clips", dirName != null)
+        assumeTrue("pass -Pclips.dir=<folder> to replay clips", dirName != null)
         val dir = File(dirName!!)
         val wavs = dir.listFiles { f -> f.name.endsWith(".wav") }?.sortedBy { it.name } ?: emptyList()
         assumeTrue("no clips in $dir", wavs.isNotEmpty())

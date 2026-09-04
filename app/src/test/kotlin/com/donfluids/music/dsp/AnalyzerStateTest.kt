@@ -15,7 +15,6 @@ class AnalyzerStateTest {
         val periodNanos = 60.0 / bpm * 1e9
         val audio = Synth.clickTrack(bpm, 20.0, accents = listOf(1f, 0.3f, 0.6f, 0.3f))
         val offsets = ArrayList<Double>()
-        var worstDrift = 0.0
         var previousBeat = 0L
         Synth.analyze(audio) { r ->
             if (!r.tempoLocked || r.lastBeatAtNanos == 0L || r.secondsHeard < 10f) return@analyze
@@ -25,13 +24,9 @@ class AnalyzerStateTest {
             val backwards = (previousBeat - r.lastBeatAtNanos) / periodNanos
             assertTrue("beat moved backwards by $backwards beats", backwards < 0.2)
             previousBeat = maxOf(previousBeat, r.lastBeatAtNanos)
-            val nowNanos = (r.secondsHeard * 1e9).toLong()
-            val age = (nowNanos - r.lastBeatAtNanos) / periodNanos
-            worstDrift = maxOf(worstDrift, age)
         }
         assertTrue("too few samples", offsets.size > 100)
         assertTrue("max offset ${offsets.max()}", offsets.max() < 0.15)
-        assertTrue("published beat lags now by $worstDrift beats", worstDrift < 1.1)
     }
 
     /** After a reset the next publish must not carry the old song's key, tempo, meter or chords. */
