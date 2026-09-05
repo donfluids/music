@@ -37,6 +37,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // A debug build is debuggable and signed with the shared debug key, so it must
+            // never be mistaken for, or install over, the release build.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true

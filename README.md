@@ -111,8 +111,13 @@ Requires JDK 17 or newer and the Android SDK (compile SDK 36). Android Studio op
 project directly; from a terminal:
 
 ```
-./gradlew :app:assembleDebug        # APK at app/build/outputs/apk/debug/
-./gradlew :app:testDebugUnitTest    # DSP unit tests on the JVM
+./gradlew :app:assembleRelease      # signed APK at app/build/outputs/apk/release/ (needs keystore.properties)
+./gradlew :app:testDebugUnitTest    # unit tests on the JVM
 ```
+
+Install release builds on phones. A debug build (`assembleDebug`) is debuggable, uses the
+application id `com.donfluids.music.debug`, and lets anyone with a USB cable read its private
+files, which defeats the clip privacy described above. Release builds are signed with the key
+in `keystore.properties`, which is ignored by git; without that file the release APK is unsigned.
 
 Minimum Android version is 8.0 (API 26).

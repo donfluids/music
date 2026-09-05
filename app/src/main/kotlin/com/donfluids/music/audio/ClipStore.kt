@@ -28,10 +28,20 @@ class ClipStore(context: Context) {
         val cutoff = System.currentTimeMillis() - 2 * 60 * 1000
         dir.listFiles { f -> f.name.endsWith(".part") && f.lastModified() < cutoff }?.forEach { it.delete() }
         // Bring clips recorded by an earlier version in from shared storage, then remove it.
+        // Internal and external storage are different volumes, so a copy is usually needed;
+        // it goes through a temporary name so a failed copy never leaves a truncated clip.
         val legacy = legacyDir ?: return
         legacy.listFiles()?.forEach { f ->
+            if (f.isDirectory) return@forEach
+            if (!(f.name.endsWith(".wav") || f.name.endsWith(".json"))) { f.delete(); return@forEach }
             val target = File(dir, f.name)
-            if (!f.renameTo(target)) runCatching { f.copyTo(target, overwrite = true); f.delete() }
+            if (!f.renameTo(target)) {
+                val temp = File(dir, f.name + ".moving")
+                runCatching {
+                    f.copyTo(temp, overwrite = true)
+                    if (temp.renameTo(target)) f.delete() else temp.delete()
+                }.onFailure { temp.delete() }
+            }
         }
         legacy.delete()
     }
@@ -44,13 +54,17 @@ class ClipStore(context: Context) {
         if (!file.exists()) return
         val json = runCatching { JSONObject(file.readText()) }.getOrElse { JSONObject() }
         val labels = JSONObject()
-        if (key.isNotBlank()) labels.put("key", key.trim())
-        if (tempo.isNotBlank()) labels.put("tempo", tempo.trim())
-        if (meter.isNotBlank()) labels.put("meter", meter.trim())
-        if (notes.isNotBlank()) labels.put("notes", notes.trim())
+        if (key.isNotBlank()) labels.put("key", clean(key, 40))
+        if (tempo.isNotBlank()) labels.put("tempo", clean(tempo, 20))
+        if (meter.isNotBlank()) labels.put("meter", clean(meter, 20))
+        if (notes.isNotBlank()) labels.put("notes", clean(notes, 500))
         json.put("labels", labels)
         file.writeText(json.toString(2))
     }
+
+    /** Trims, drops control characters and caps the length of a user-entered label. */
+    private fun clean(value: String, max: Int): String =
+        value.filter { it == '\n' || !it.isISOControl() }.trim().take(max)
 
     /** Packs every clip into one zip for sharing. Slow: call off the main thread. */
     fun zipAll(): File {

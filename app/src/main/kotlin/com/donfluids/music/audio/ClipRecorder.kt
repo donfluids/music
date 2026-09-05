@@ -10,6 +10,7 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
@@ -35,7 +36,8 @@ class ClipRecorder(
     private val maxSeconds: Double = 60.0,
     private val onError: (String) -> Unit = {},
 ) {
-    val name: String = "clip_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+    // UTC throughout: a local time plus offset would reveal the region the clip was made in.
+    val name: String = "clip_" + utcFormat("yyyyMMdd_HHmmss_SSS").format(Date())
     val wavFile = File(dir, "$name.wav")
     private val partFile = File(dir, "$name.wav.part")
     val jsonFile = File(dir, "$name.json")
@@ -154,7 +156,7 @@ class ClipRecorder(
 
     private fun sidecar(finalResult: AnalysisResult, durationSeconds: Double): JSONObject = JSONObject()
         .put("clip", name)
-        .put("recordedAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(Date()))
+        .put("recordedAt", utcFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(Date()))
         .put("android", Build.VERSION.SDK_INT) // API level only; no device model
         .put("sampleRate", sampleRate)
         .put("preset", preset.id)
@@ -195,6 +197,8 @@ class ClipRecorder(
         failed = true
         onError("Could not write the clip: ${e.message ?: e.javaClass.simpleName}")
     }
+
+    private fun utcFormat(pattern: String) = SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
 
     private fun round(v: Float): Double = Math.round(v * 100.0) / 100.0
     private fun round(v: Double): Double = Math.round(v * 100.0) / 100.0
