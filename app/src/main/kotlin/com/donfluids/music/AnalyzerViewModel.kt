@@ -112,7 +112,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         val newSession = Session(cap, MusicAnalyzer(cap.sampleRate, _state.value.preset))
         holder.set(newSession)
         session = newSession
-        _state.update { it.copy(listening = true, error = null, analysis = AnalysisResult()) }
+        _state.update { it.copy(listening = true, error = null, analysis = AnalysisResult(), heldKey = null, transpose = 0) }
     }
 
     /** Runs on the audio thread of [s]; a stale thread only ever touches its own session. */
@@ -146,7 +146,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         session = null
         s.capture.stop() // the audio thread is done before the clip is finished
         recorder.get()?.let { finishClip(it) }
-        _state.update { it.copy(listening = false) }
+        _state.update { it.copy(listening = false, heldKey = null) }
     }
 
     /** Forget everything heard so far: a fresh analyser replaces the old one, never mutated in place. */
@@ -179,7 +179,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         prefs.edit().putString(PREF_PRESET, preset.id).apply()
         session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, preset) }
         recorder.get()?.analysisStartSeconds = 0f
-        _state.update { it.copy(preset = preset, analysis = AnalysisResult(), tempoMultiplier = 1f) }
+        _state.update { it.copy(preset = preset, analysis = AnalysisResult(), tempoMultiplier = 1f, heldKey = null, transpose = 0) }
     }
 
     fun setTempoMultiplier(multiplier: Float) {

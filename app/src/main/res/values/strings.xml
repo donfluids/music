@@ -33,8 +33,15 @@
     <string name="transpose_play">sounding %1$s · play %2$s (%3$+d)</string>
     <string name="numbers">Numbers</string>
     <string name="letters">Letters</string>
-    <string name="tempo_felt_as">Tempo felt as</string>
-    <string name="tempo_as_heard">as heard</string>
+    <string name="sub_double">×2</string>
+    <string name="sub_half">÷2</string>
+    <string name="tap_tempo_feel">feel the tempo as double or half</string>
+    <string name="transpose_down">Transpose down</string>
+    <string name="transpose_up">Transpose up</string>
+    <string name="theme_to_light">Switch to light theme</string>
+    <string name="theme_to_dark">Switch to dark theme</string>
+    <string name="seconds_short">%1$ds</string>
+    <string name="unknown">unknown</string>
     <string name="tuning">Tuning</string>
     <string name="tuning_unknown">–</string>
     <string name="tuning_in_tune">in tune with A = 440 Hz</string>
@@ -69,7 +76,7 @@
     <string name="cancel">Cancel</string>
     <string name="delete">Delete</string>
     <string name="clip_notice_title">Before recording clips</string>
-    <string name="clip_notice_text">A clip stores up to 60 seconds of raw microphone audio on this phone, in the app\'s private storage. It records everyone within earshot, so let the people singing know. Nothing is uploaded; a clip only leaves the phone when you choose Share. You can delete all clips at any time.</string>
+    <string name="clip_notice_text">A clip stores up to 60 seconds of raw microphone audio on this phone, in the app\'s private storage, together with the time it was made, what the app decided, and the notes you enter. It records everyone within earshot, so let the people singing know. Nothing is uploaded; a clip only leaves the phone when you choose Share. You can delete all clips at any time.</string>
     <string name="clip_notice_accept">Understood</string>
     <string name="chord_playing">%1$s, playing now</string>
     <string name="hero_description">%1$s: %2$s, confidence %3$d percent</string>

@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -82,6 +84,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -120,7 +123,7 @@ private fun shown(s: UiState): Shown {
     val base = s.heldKey ?: a.displayKey
     return Shown(
         key = base?.transposed(s.transpose),
-        keyConfidence = if (s.heldKey != null) 1f else a.displayKeyConfidence,
+        keyConfidence = a.displayKeyConfidence,
         keyHeld = s.heldKey != null,
         chord = a.currentChord?.transposed(s.transpose),
         transpose = s.transpose,
@@ -231,7 +234,7 @@ private fun PresetMenu(selected: AnalysisPreset, onSelect: (AnalysisPreset) -> U
     val description = stringResource(R.string.preset_menu)
     Box {
         TextButton(onClick = { open = true }, modifier = Modifier.semantics { contentDescription = "$description: ${selected.title}" }) {
-            Text("${selected.title} ▾", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${selected.title} ▾", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.clearAndSetSemantics { })
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             AnalysisPreset.ALL.forEach { preset ->
@@ -252,10 +255,10 @@ private fun PresetMenu(selected: AnalysisPreset, onSelect: (AnalysisPreset) -> U
 /** A drawn sun or moon, so it renders the same on every phone and has a real accessible name. */
 @Composable
 private fun ThemeToggle(dark: Boolean, onToggle: () -> Unit) {
-    val description = stringResource(R.string.theme_toggle)
+    val description = stringResource(if (dark) R.string.theme_to_light else R.string.theme_to_dark)
     val colour = MaterialTheme.colorScheme.onSurfaceVariant
     val ground = MaterialTheme.colorScheme.background
-    IconButton(onClick = onToggle, modifier = Modifier.semantics { contentDescription = description; role = Role.Switch }) {
+    IconButton(onClick = onToggle, modifier = Modifier.semantics { contentDescription = description }) {
         Canvas(Modifier.size(20.dp)) {
             val r = size.minDimension / 2
             if (dark) {
@@ -412,7 +415,7 @@ private fun StatusLine(state: UiState, onStopClip: () -> Unit) {
             ) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(MaterialTheme.colorScheme.tertiary))
                 Text(
-                    stringResource(R.string.rec) + " ${state.recordingSeconds}s",
+                    stringResource(R.string.rec) + " " + stringResource(R.string.seconds_short, state.recordingSeconds),
                     style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = Tabular),
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                 )
@@ -428,7 +431,7 @@ private fun KeyAndChordRow(sh: Shown) {
         HeroValue(
             value = sh.key?.name ?: "–",
             sub = when {
-                sh.keyHeld -> stringResource(R.string.sub_held)
+                sh.keyHeld && sh.key != null -> sh.key.mode.label + " · " + stringResource(R.string.sub_held)
                 sh.key != null -> sh.key.mode.label
                 else -> null
             },
@@ -450,20 +453,21 @@ private fun KeyAndChordRow(sh: Shown) {
 /** Row 2: tempo with beat dots (tap the number to feel it double or half), and the time signature. */
 @Composable
 private fun TempoAndTimeRow(a: AnalysisResult, multiplier: Float, listening: Boolean, onMultiplier: (Float) -> Unit) {
+    val tapLabel = stringResource(R.string.tap_tempo_feel)
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1.3f)) {
+        Column(Modifier.weight(1f)) {
             val next = when (multiplier) { 1f -> 2f; 2f -> 0.5f; else -> 1f }
             HeroValue(
                 value = a.bpm?.let { (it * multiplier).roundToInt().toString() } ?: "–",
                 sub = when {
-                    multiplier == 2f -> "×2"
-                    multiplier == 0.5f -> "÷2"
+                    multiplier == 2f -> stringResource(R.string.sub_double)
+                    multiplier == 0.5f -> stringResource(R.string.sub_half)
                     a.bpm != null && !a.tempoLocked -> stringResource(R.string.sub_settling)
                     else -> null
                 },
                 label = stringResource(R.string.label_bpm),
                 confidence = (a.tempoStrength * 2f).coerceIn(0f, 1f),
-                modifier = Modifier.clickable(enabled = a.bpm != null, role = Role.Button) { onMultiplier(next) },
+                modifier = Modifier.clickable(enabled = a.bpm != null, role = Role.Button, onClickLabel = tapLabel) { onMultiplier(next) },
             )
             if (a.bpm != null) {
                 Spacer(Modifier.height(8.dp))
@@ -492,19 +496,23 @@ private fun HeroValue(
 ) {
     val known = value != "–"
     val settled = confidence >= 0.5f
-    val description = stringResource(R.string.hero_description, label, if (known) value + (sub?.let { " $it" } ?: "") else "unknown", (confidence * 100).roundToInt())
+    val unknown = stringResource(R.string.unknown)
+    val description = stringResource(R.string.hero_description, label, if (known) value + (sub?.let { " $it" } ?: "") else unknown, (confidence * 100).roundToInt())
+    val colour = when {
+        !known -> MaterialTheme.colorScheme.outline
+        accent -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onBackground
+    }
     Column(modifier.semantics(mergeDescendants = true) { contentDescription = description }) {
-        Text(
+        // Shrinks for long names such as "Bbmaj7" so nothing runs off the column.
+        BasicText(
             value,
-            style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = Tabular),
-            color = when {
-                !known -> MaterialTheme.colorScheme.outline
-                accent -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.onBackground
-            },
+            style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = Tabular, color = colour),
             maxLines = 1,
-            overflow = TextOverflow.Visible,
             softWrap = false,
+            overflow = TextOverflow.Clip,
+            autoSize = TextAutoSize.StepBased(minFontSize = 28.sp, maxFontSize = 56.sp, stepSize = 2.sp),
+            modifier = Modifier.fillMaxWidth().height(60.dp),
         )
         Spacer(Modifier.height(6.dp))
         Box(Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -512,7 +520,7 @@ private fun HeroValue(
                 Modifier
                     .fillMaxWidth(confidence.coerceIn(0f, 1f))
                     .height(3.dp)
-                    .background(if (settled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+                    .background(if (settled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
             )
         }
         Spacer(Modifier.height(4.dp))
@@ -595,14 +603,23 @@ private fun BeatDot(index: Int, beatsPerBar: Int, a: AnalysisResult, multiplier:
             drawCircle(if (active && index == 0 && beatsPerBar > 1) tertiary else if (active) primary else idle)
         }
         if (beatsPerBar > 1) {
-            val periodNanos = a.beatPeriodMillis * 1e6 / multiplier
-            val elapsed = (frame.value - a.lastBeatAtNanos) / periodNanos
-            val current = Math.floorMod(a.lastBeatIndexInBar + floor(elapsed).toInt(), beatsPerBar)
-            val active = index == current
+            // Two copies of the digit, one in each colour; the draw phase decides which shows.
+            fun isActive(): Boolean {
+                val periodNanos = a.beatPeriodMillis * 1e6 / multiplier
+                val elapsed = (frame.value - a.lastBeatAtNanos) / periodNanos
+                return index == Math.floorMod(a.lastBeatIndexInBar + floor(elapsed).toInt(), beatsPerBar)
+            }
             Text(
                 (index + 1).toString(),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (active && index == 0) onTertiary else if (active) onPrimary else muted,
+                color = muted,
+                modifier = Modifier.graphicsLayer { alpha = if (isActive()) 0f else 1f },
+            )
+            Text(
+                (index + 1).toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (index == 0) onTertiary else onPrimary,
+                modifier = Modifier.graphicsLayer { alpha = if (isActive()) 1f else 0f },
             )
         }
     }
@@ -615,14 +632,14 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit, onNashville: (Bo
     val sounding = key.transposed(-sh.transpose)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.transpose), style = MaterialTheme.typography.labelMedium, color = muted)
-        StepButton("−") { onTranspose(sh.transpose - 1) }
+        StepButton("−", stringResource(R.string.transpose_down), enabled = sh.transpose > -6) { onTranspose(sh.transpose - 1) }
         Text(
             String.format(Locale.ROOT, "%+d", sh.transpose),
             style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = Tabular),
             modifier = Modifier.width(32.dp),
             textAlign = TextAlign.Center,
         )
-        StepButton("+") { onTranspose(sh.transpose + 1) }
+        StepButton("+", stringResource(R.string.transpose_up), enabled = sh.transpose < 6) { onTranspose(sh.transpose + 1) }
         Spacer(Modifier.weight(1f))
         SingleChoiceSegmentedButtonRow(Modifier.height(36.dp)) {
             SegmentedButton(selected = !sh.nashville, onClick = { onNashville(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
@@ -643,9 +660,14 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit, onNashville: (Bo
 }
 
 @Composable
-private fun StepButton(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.size(40.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-        Text(label, style = MaterialTheme.typography.titleMedium)
+private fun StepButton(glyph: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(40.dp).semantics { contentDescription = description },
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+    ) {
+        Text(glyph, style = MaterialTheme.typography.titleMedium, modifier = Modifier.clearAndSetSemantics { })
     }
 }
 
@@ -728,7 +750,7 @@ private fun Details(a: AnalysisResult, sh: Shown) {
         ) {
             Text(stringResource(R.string.details), style = MaterialTheme.typography.labelMedium, color = muted)
             Spacer(Modifier.weight(1f))
-            Text(if (open) "▴" else "▾", color = muted)
+            Text(if (open) "▴" else "▾", color = muted, modifier = Modifier.clearAndSetSemantics { })
         }
         AnimatedVisibility(open) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(bottom = 8.dp)) {
@@ -767,7 +789,7 @@ private fun Details(a: AnalysisResult, sh: Shown) {
                         )
                     }
                 }
-                DetailRow(stringResource(R.string.notes_heard)) { ChromaBars(a.chroma, a.displayKey) }
+                DetailRow(stringResource(R.string.notes_heard)) { ChromaBars(a.chroma, sh.key?.transposed(-sh.transpose)) }
                 if (a.meterScores.isNotEmpty()) {
                     DetailRow(stringResource(R.string.bar_length)) {
                         a.meterScores.entries.sortedByDescending { it.value }.take(4).forEach { (beats, score) ->
@@ -778,7 +800,7 @@ private fun Details(a: AnalysisResult, sh: Shown) {
                                         Modifier
                                             .fillMaxWidth(score.coerceIn(0f, 1f))
                                             .height(4.dp)
-                                            .background(if (beats == a.beatsPerBar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+                                            .background(if (beats == a.beatsPerBar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
                                     )
                                 }
                             }
