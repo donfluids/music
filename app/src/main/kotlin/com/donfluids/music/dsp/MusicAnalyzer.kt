@@ -169,6 +169,7 @@ class MusicAnalyzer(
         pendingKeyConfidence = 0f
         pendingAlternatives = emptyList()
         shownMeterIndex = 0
+        shownAnchorShift = 0.0
         beatAnchorHop = 0.0
         beatAnchorNanos = 0L
         beatPeriodNanos = 0.0
@@ -373,20 +374,23 @@ class MusicAnalyzer(
         val estimate = tempoTracker.estimate()
         if (estimate == null || estimate.strength < 0.12) {
             // Keep the last tempo briefly through a quiet bar, then let go.
-            if (++tempoAbsentRuns > 6) { tempo = null; shownMeter = null; meterCandidate = null; beatPeriodHops = 0.0; lastGridIndex = Long.MIN_VALUE }
+            if (++tempoAbsentRuns > 6) {
+                tempo = null; shownMeter = null; meterCandidate = null; beatPeriodHops = 0.0; lastGridIndex = Long.MIN_VALUE
+                tempoTracker.releaseLock()
+            }
             return
         }
         tempoAbsentRuns = 0
         tempo = estimate
-        val previousAnchor = beatAnchorNanos
-        val previousCountedPeriod = beatPeriodNanos / (shownMeter?.pulseDivisor ?: 1)
+        val previousAnchor = countedAnchorNanos()
+        val previousCountedPeriod = beatPeriodNanos * (shownMeter?.pulseRatio ?: 1.0)
         beatAnchorNanos = hopEndNanos - (estimate.lastBeatFramesAgo * hopSeconds * 1e9).toLong()
         beatPeriodNanos = estimate.periodFrames * hopSeconds * 1e9
         // Carry the bar position forward to the new anchor, so it stays right even if the
         // meter analysis below has nothing new to say.
         val m0 = shownMeter
         if (m0 != null && previousCountedPeriod > 0.0) {
-            val advanced = Math.round((beatAnchorNanos - previousAnchor) / previousCountedPeriod)
+            val advanced = Math.round((countedAnchorNanos() - previousAnchor) / previousCountedPeriod)
             shownMeterIndex = Math.floorMod(shownMeterIndex + advanced, m0.beatsPerBar.toLong()).toInt()
         }
         if (estimate.locked) {
@@ -405,11 +409,16 @@ class MusicAnalyzer(
         } else {
             // Keep the displayed bar length, but take the downbeat position for that bar length
             // from the fresh analysis so the beat count stays in step with the new beat phase.
-            shownMeterIndex = meter.lastBeatIndexByGrid[old.beatsPerBar to old.pulseDivisor] ?: shownMeterIndex
+            meter.positions[old.grid]?.let { shownMeterIndex = it.index; shownAnchorShift = it.anchorShift }
         }
-        if (shownMeter === meter) shownMeterIndex = meter.lastBeatIndexInBar
+        if (shownMeter === meter) { shownMeterIndex = meter.position.index; shownAnchorShift = meter.position.anchorShift }
     }
     private var shownMeterIndex = 0
+    /** Tracked periods to move the anchor back so it sits on the counted grid (6/8 in two). */
+    private var shownAnchorShift = 0.0
+
+    /** The beat anchor moved onto the counted grid. */
+    private fun countedAnchorNanos(): Long = beatAnchorNanos - (shownAnchorShift * beatPeriodNanos).toLong()
 
     private fun publish() {
         val rms = if (levelSamples > 0) sqrt(levelRms / levelSamples) else 0.0
@@ -421,17 +430,19 @@ class MusicAnalyzer(
         val maxChroma = chroma.max().coerceAtLeast(1e-9f)
         val t = tempo
         val m = shownMeter
-        // For uneven meters the counted pulse is a subdivision of the tracked beat.
-        val divisor = m?.pulseDivisor ?: 1
-        val countedPeriodNanos = beatPeriodNanos / divisor
+        // The counted pulse may be a subdivision (7/8 in eighths) or a grouping (6/8 in dotted
+        // quarters) of the tracked beat.
+        val ratio = m?.pulseRatio ?: 1.0
+        val countedPeriodNanos = beatPeriodNanos * ratio
         // The beat anchor is fixed when the tempo was estimated; step forward from it in whole
         // beats so the published beat is always the latest one at or before now, and the bar
         // position advances with it.
         var lastBeatAt = 0L
         var beatsSinceAnchor = 0L
+        val anchor = countedAnchorNanos()
         if (t != null && countedPeriodNanos > 0.0) {
-            beatsSinceAnchor = Math.floorDiv(hopEndNanos - beatAnchorNanos, countedPeriodNanos.toLong().coerceAtLeast(1L))
-            lastBeatAt = beatAnchorNanos + (beatsSinceAnchor * countedPeriodNanos).toLong()
+            beatsSinceAnchor = Math.floorDiv(hopEndNanos - anchor, countedPeriodNanos.toLong().coerceAtLeast(1L))
+            lastBeatAt = anchor + (beatsSinceAnchor * countedPeriodNanos).toLong()
         }
         val beatIndex = if (m != null) Math.floorMod(shownMeterIndex + beatsSinceAnchor, m.beatsPerBar.toLong()).toInt() else 0
         result = AnalysisResult(
@@ -443,7 +454,7 @@ class MusicAnalyzer(
             keyAlternatives = pendingAlternatives,
             tuningCents = chromaExtractor.tuningOffsetCents().toFloat(),
             tuningConfidence = chromaExtractor.tuningConfidence().toFloat(),
-            bpm = t?.let { (it.bpm * divisor).toFloat() },
+            bpm = t?.let { (it.bpm / ratio).toFloat() },
             tempoStrength = t?.strength?.toFloat() ?: 0f,
             tempoLocked = t?.locked ?: false,
             beatPeriodMillis = if (t != null) (countedPeriodNanos / 1e6).toFloat() else 0f,

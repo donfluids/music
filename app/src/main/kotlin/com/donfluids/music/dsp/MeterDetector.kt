@@ -27,23 +27,35 @@ class MeterDetector(
     /** Ignore grids finer than this many frames (about 90 ms at the default hop). */
     private val minGridFrames: Double = 7.5,
 ) {
+    /** Where the most recent tracked beat sits on a counted grid, and how to reach that grid. */
+    class Position(
+        /** Bar position (0 = downbeat) of the counted pulse at or just before the tracked beat. */
+        val index: Int,
+        /** Tracked periods to move the beat anchor back so it lands on the counted grid. */
+        val anchorShift: Double,
+    )
+
     class Result(
         /** Beats per bar at the counted pulse, e.g. 4 for 4/4, 2 for 6/8 felt in two, 7 for 7/8. */
         val beatsPerBar: Int,
-        /** The counted pulse is the tracked beat period divided by this (1, 2, 5 or 7). */
-        val pulseDivisor: Int,
+        /** Counted pulse period as a multiple of the tracked beat period (0.5 for 7/8 tracked in twos, 1.5 for 6/8 tracked in twos). */
+        val pulseRatio: Double,
         /** True when each beat divides in three (6/8, 9/8, 12/8 felt at the dotted quarter). */
         val compound: Boolean,
-        /** Position of the most recent tracked beat within the bar, 0 = downbeat. */
-        val lastBeatIndexInBar: Int,
+        /** Position of the most recent tracked beat on the counted grid. */
+        val position: Position,
         /** Display label such as "4/4" or "6/8". */
         val label: String,
         val confidence: Double,
         /** Best score for each candidate bar length, for the diagnostics display. */
         val scores: Map<Int, Double>,
-        /** Bar position of the most recent tracked beat for each (beatsPerBar, pulseDivisor). */
-        val lastBeatIndexByGrid: Map<Pair<Int, Int>, Int>,
-    )
+        /** The (bar length, grid divisor) hypothesis that won. */
+        val grid: Pair<Int, Int>,
+        /** Counted-grid position for every hypothesis, so a kept bar length can follow a new beat phase. */
+        val positions: Map<Pair<Int, Int>, Position>,
+    ) {
+        val lastBeatIndexInBar: Int get() = position.index
+    }
 
     private class Template(val beats: Int, val accents: DoubleArray, val prior: Double)
 
@@ -53,7 +65,7 @@ class MeterDetector(
         Template(4, doubleArrayOf(1.0, 0.2, 0.6, 0.2), 1.05),
         Template(5, doubleArrayOf(1.0, 0.2, 0.6, 0.2, 0.2), 0.85), // 2+3
         Template(5, doubleArrayOf(1.0, 0.2, 0.2, 0.6, 0.2), 0.85), // 3+2
-        Template(6, doubleArrayOf(1.0, 0.2, 0.2, 0.7, 0.2, 0.2), 1.00),
+        Template(6, doubleArrayOf(1.0, 0.25, 0.25, 0.55, 0.25, 0.25), 0.95),
         Template(7, doubleArrayOf(1.0, 0.2, 0.6, 0.2, 0.6, 0.2, 0.2), 0.85), // 2+2+3
         Template(7, doubleArrayOf(1.0, 0.2, 0.2, 0.6, 0.2, 0.6, 0.2), 0.85), // 3+2+2
         Template(7, doubleArrayOf(1.0, 0.2, 0.6, 0.2, 0.2, 0.6, 0.2), 0.85), // 2+3+2
@@ -105,6 +117,10 @@ class MeterDetector(
         var bestFit = 0.0
         val scores = HashMap<Int, Double>()
         val indexByGrid = HashMap<Pair<Int, Int>, Int>()
+        // Best folded pattern and its fit per (bar length, grid), for the six-versus-three check.
+        val foldedByGrid = HashMap<Pair<Int, Int>, DoubleArray>()
+        val fitByGrid = HashMap<Pair<Int, Int>, Double>()
+        val scoreByGrid = HashMap<Pair<Int, Int>, Double>()
 
         for (grid in grids) {
             val step = periodFrames / grid.divisor
@@ -131,7 +147,10 @@ class MeterDetector(
                     for (j in 0 until m) folded[j] /= counts[j]
                     val fit = dot(zScore(folded), template.accents) / m
                     val score = gridPrior * prior * (0.65 * fit + 0.35 * periodicity)
-                    if (score > gridBest) { gridBest = score; gridOffset = offset }
+                    if (score > gridBest) {
+                        gridBest = score; gridOffset = offset
+                        foldedByGrid[m to grid.divisor] = folded; fitByGrid[m to grid.divisor] = fit
+                    }
                     if (score > bestScore) {
                         bestScore = score
                         bestBeats = m
@@ -144,26 +163,64 @@ class MeterDetector(
                 if (previous == null || gridBest > (scores[m] ?: Double.NEGATIVE_INFINITY)) {
                     indexByGrid[key] = Math.floorMod(count - 1 - gridOffset, m)
                 }
+                scoreByGrid[key] = max(scoreByGrid[key] ?: Double.NEGATIVE_INFINITY, gridBest)
                 scores[m] = max(scores[m] ?: Double.NEGATIVE_INFINITY, gridBest)
             }
         }
         if (bestBeats == 0) return null
+
+        // Three versus six on the tracked pulse: two bars of three fold into a six whose fourth
+        // pulse is as strong as its first, whereas a real 6/8 has a weaker secondary accent
+        // there. When the six-fold also fits well, prefer it. The same accent structure at the
+        // three level is invisible, because any two-level pattern matches the three template.
+        if (bestBeats == 3 && bestDivisor == 1) {
+            // The six may live on the tracked pulse (a slow 6/8 tracked at the eighth) or on the
+            // half grid (a 6/8 tracked at two eighths, whose secondary accent falls between pulses).
+            for (divisor in intArrayOf(1, 2)) {
+                val six = foldedByGrid[6 to divisor] ?: continue
+                val sixFit = fitByGrid[6 to divisor] ?: 0.0
+                if (sixFit >= 0.9 && six[3] < 0.8 * six[0] && six[3] > six[1] && six[3] > six[5]) {
+                    bestBeats = 6
+                    bestDivisor = divisor
+                    bestFit = sixFit
+                    bestScore = scoreByGrid[6 to divisor] ?: bestScore
+                    break
+                }
+            }
+        }
 
         val compound = bestDivisor == 1 && bestBeats <= 4 && compoundPulse
         val runnerUp = scores.filterKeys { it != bestBeats }.values.maxOrNull() ?: 0.0
         val margin = if (bestScore > 0) ((bestScore - runnerUp) / bestScore).coerceIn(0.0, 1.0) else 0.0
         val confidence = (0.5 * bestFit.coerceIn(0.0, 1.0) + 0.5 * margin).coerceIn(0.0, 1.0)
 
+        val positions = indexByGrid.mapValues { (grid, fineIndex) -> position(grid.first, grid.second, fineIndex) }
+        val grid = bestBeats to bestDivisor
+        val sixInTwo = bestBeats == 6 && bestDivisor <= 2
         return Result(
-            beatsPerBar = bestBeats,
-            pulseDivisor = bestDivisor,
-            compound = compound,
-            lastBeatIndexInBar = indexByGrid[bestBeats to bestDivisor] ?: 0,
-            label = label(bestBeats, compound),
+            beatsPerBar = if (sixInTwo) 2 else bestBeats,
+            pulseRatio = pulseRatio(bestBeats, bestDivisor),
+            compound = compound || sixInTwo,
+            position = positions[grid] ?: Position(0, 0.0),
+            label = if (sixInTwo) "6/8" else label(bestBeats, compound),
             confidence = confidence,
             scores = scores,
-            lastBeatIndexByGrid = indexByGrid,
+            grid = grid,
+            positions = positions,
         )
+    }
+
+    /** Counted period over tracked period for a hypothesis; six eighths are always counted in two. */
+    private fun pulseRatio(beats: Int, divisor: Int): Double = when {
+        beats == 6 && divisor == 2 -> 1.5 // tracked at two eighths, counted at three
+        beats == 6 && divisor == 1 -> 3.0 // tracked at the eighth, counted at three
+        else -> 1.0 / divisor
+    }
+
+    /** Maps a fine-grid bar index to the counted grid, moving the anchor back onto it if needed. */
+    private fun position(beats: Int, divisor: Int, fineIndex: Int): Position = when {
+        beats == 6 && divisor <= 2 -> Position(index = fineIndex / 3, anchorShift = (fineIndex % 3).toDouble() / divisor)
+        else -> Position(index = fineIndex, anchorShift = 0.0)
     }
 
     /** Onset strength sampled on a grid ending at [newest] with spacing [step], oldest first. */

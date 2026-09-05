@@ -66,8 +66,7 @@ class ChordTemplates {
  * Tracks chords over time with a hidden Markov model decoded by fixed-lag Viterbi.
  *
  * States are the 84 chords plus "no chord". Each observation (an averaged chroma vector) scores
- * every state by template similarity, normalised per observation so that the evidence is the
- * contrast between chords rather than the absolute similarity. The model prefers to stay on
+ * every state by template similarity. The model prefers to stay on
  * the current chord, with a stickiness that depends on how much time the observation spans,
  * and when a key is known it moves more readily to chords that belong to it. The decision for
  * an observation is made [lag] observations later, once the following context is known, which
@@ -125,6 +124,7 @@ class ChordTracker(
         provisional = null
         hasDecision = false
         decidedIndex = -1
+        key = null
     }
 
     /** Tells the tracker which key the song is in, or null when unknown. */
@@ -192,22 +192,15 @@ class ChordTracker(
         return true
     }
 
-    /** Log-softmax of the scaled similarities, so evidence is contrast, not absolute similarity. */
+    /** Log-emission per state: scaled similarity, with the extension penalty and a silence state. */
     private fun computeEmissions(silent: Boolean) {
-        var max = Double.NEGATIVE_INFINITY
         for (s in 0 until stateCount) {
-            val raw = when {
+            emissions[s] = when {
                 s == noChord -> beta * noChordSimilarity + if (silent) 5.0 else 0.0
                 silent -> 0.0
                 else -> beta * (sims[s] - ChordTemplates.penalty(templates.chords[s].type))
             }
-            emissions[s] = raw
-            if (raw > max) max = raw
         }
-        var sum = 0.0
-        for (s in 0 until stateCount) sum += exp(emissions[s] - max)
-        val logSum = max + ln(sum)
-        for (s in 0 until stateCount) emissions[s] -= logSum
     }
 
     /** Log-probability of switching to each state; in-key chords share more of the switch mass. */
@@ -226,7 +219,8 @@ class ChordTracker(
     private fun inKey(key: Key, chord: ChordLabel): Boolean {
         val degree = key.scale.indexOf(chord.root)
         if (degree < 0) return false
-        val diatonicMinor = key.chords[degree].quality == com.donfluids.music.music.ChordQuality.MINOR
+        // The diminished degree (vii in major, ii in minor) is heard as a minor triad.
+        val diatonicMinor = key.chords[degree].quality != com.donfluids.music.music.ChordQuality.MAJOR
         return chord.minor == diatonicMinor || chord.type.isSus
     }
 }

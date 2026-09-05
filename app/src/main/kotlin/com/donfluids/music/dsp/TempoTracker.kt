@@ -23,8 +23,8 @@ class TempoTracker(
     historySeconds: Double = 8.0,
     minBpm: Double = 40.0,
     maxBpm: Double = 220.0,
-    private val priorCenterBpm: Double = 90.0,
-    private val priorWidthOctaves: Double = 0.6,
+    private val priorCenterBpm: Double = 120.0,
+    private val priorWidthOctaves: Double = 0.55,
     private val smoothingEstimates: Int = 5,
 ) {
     class Estimate(
@@ -71,6 +71,13 @@ class TempoTracker(
     }
     private val recentPeriods = ArrayDeque<Double>()
 
+    /** One shortlisted candidate from the last estimate, for diagnostics and tests. */
+    class Candidate(val lag: Int, val bpm: Double, val acf: Double, val prior: Double, val score: Double, val salience: Double, val finalScore: Double)
+
+    /** Shortlist of the last estimate, best final score first. */
+    var lastCandidates: List<Candidate> = emptyList()
+        private set
+
     /** Seconds of onset history currently held. */
     val secondsBuffered: Double get() = count / framesPerSecond
 
@@ -81,6 +88,13 @@ class TempoTracker(
         recentPeriods.clear()
         lockedPeriod = 0.0
         octaveChallenges = 0
+    }
+
+    /** Forget the locked tempo, e.g. after a stretch of silence; hysteresis restarts at the next lock. */
+    fun releaseLock() {
+        lockedPeriod = 0.0
+        octaveChallenges = 0
+        recentPeriods.clear()
     }
 
     fun push(onsetStrength: Float) {
@@ -94,9 +108,15 @@ class TempoTracker(
         val n = count
         if (n < 3.0 * framesPerSecond || n <= 2 * minLag) return null
 
-        // Unroll the ring into time order.
+        // Unroll the ring into time order, smoothing each onset over three frames so a beat that
+        // falls between two frames still correlates with itself at the next beat.
         val start = (head - n + capacity) % capacity
-        for (i in 0 until n) linear[i] = ring[(start + i) % capacity]
+        for (i in 0 until n) {
+            val a = ring[(start + maxOf(0, i - 1)) % capacity]
+            val b = ring[(start + i) % capacity]
+            val c = ring[(start + minOf(n - 1, i + 1)) % capacity]
+            linear[i] = 0.25f * a + 0.5f * b + 0.25f * c
+        }
 
         // Remove the slow trend (moving average) so the autocorrelation sees rhythm, not loudness.
         var sum = 0.0
@@ -150,11 +170,13 @@ class TempoTracker(
         }
         var best = -1
         var bestScore = Double.NEGATIVE_INFINITY
+        val candidates = ArrayList<Candidate>(shortlist.size)
         for ((i, lag) in shortlist.withIndex()) {
-            // Square root softens the salience so it breaks ties without overruling the prior.
-            val s = score[lag] * (if (maxSalience > 0) kotlin.math.sqrt(salience[i] / maxSalience) else 1.0)
+            val s = score[lag] * (if (maxSalience > 0) salience[i] / maxSalience else 1.0)
+            candidates += Candidate(lag, framesPerSecond * 60.0 / lag, acf[lag], prior[lag], score[lag], salience[i], s)
             if (s > bestScore) { bestScore = s; best = lag }
         }
+        lastCandidates = candidates.sortedByDescending { it.finalScore }
         if (best < 0) return null
 
         // Octave hysteresis: once locked, a double, half, triple or third of the current
@@ -169,8 +191,10 @@ class TempoTracker(
                 val familiar = shortlist.firstOrNull { kotlin.math.abs(it / lockedPeriod - 1.0) < 0.06 }
                 if (familiar != null && ++octaveChallenges < octaveSwitchEstimates) {
                     best = familiar
-                } else if (familiar == null) {
-                    octaveChallenges = 0
+                } else {
+                    // The alternative has won long enough, or the old pulse has faded from the
+                    // shortlist: let it through and start over; the new tempo must lock afresh.
+                    releaseLock()
                 }
             }
         }
@@ -188,7 +212,7 @@ class TempoTracker(
         val sorted = recentPeriods.sorted()
         val period = sorted[sorted.size / 2]
         val locked = recentPeriods.size >= smoothingEstimates && sorted.last() / sorted.first() < 1.04
-        if (locked) { lockedPeriod = period; if (octaveChallenges >= octaveSwitchEstimates) octaveChallenges = 0 }
+        if (locked) lockedPeriod = period
 
         val strength = acf[best].coerceIn(0.0, 1.0)
         val phase = bestPhase(n, period)
@@ -231,7 +255,10 @@ class TempoTracker(
                 var v = detrended[idx]
                 if (idx > 0) v = max(v, detrended[idx - 1])
                 if (idx < n - 1) v = max(v, detrended[idx + 1])
-                s += max(0f, v)
+                // Squared, so accented beats count for much more than passing notes: the log
+                // compression in the onset detector otherwise leaves too little contrast.
+                val p = max(0f, v).toDouble()
+                s += p * p
                 used++
             }
             if (s > bestSum) { bestSum = s; bestPhase = phase; bestCount = max(1, used) }
