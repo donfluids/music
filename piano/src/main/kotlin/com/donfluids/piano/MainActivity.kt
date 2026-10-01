@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.Color
 
 class MainActivity : ComponentActivity() {
 
-    private var output: AudioOutput? = null
+    private var output by mutableStateOf<AudioOutput?>(null)
     private var error by mutableStateOf<String?>(null)
     private val settings by lazy { Settings(applicationContext) }
 

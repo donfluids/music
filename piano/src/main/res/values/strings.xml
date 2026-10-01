@@ -1,22 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Mini Piano</string>
-    <string name="octave_down">Octave down</string>
-    <string name="octave_up">Octave up</string>
     <string name="sustain">Sustain</string>
     <string name="note_names">Names</string>
-    <string name="audio_error">Could not open audio output.</string>
-    <string name="key_description">%1$s</string>
     <string name="scale">Scale</string>
     <string name="scale_off">Off</string>
     <string name="scale_major">major</string>
     <string name="scale_minor">minor</string>
-    <string name="tone">Tone</string>
-    <string name="metronome">Metronome</string>
-    <string name="metronome_start">Start</string>
-    <string name="metronome_stop">Stop</string>
-    <string name="bpm">bpm</string>
-    <string name="beats_per_bar">%1$d/4</string>
     <string name="done">Done</string>
     <string name="reverb">Room</string>
     <string name="haptics">Tick</string>

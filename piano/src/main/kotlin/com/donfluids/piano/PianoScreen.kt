@@ -11,14 +11,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -106,6 +106,9 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     val octaves = 2
     val synth: () -> PianoSynth? = { output()?.synth }
     val chordHeld = remember { mutableStateMapOf<Int, List<Int>>() }
+    // The audio engine is recreated whenever the activity returns to the front; keep it in step.
+    val engine = output()
+    LaunchedEffect(engine) { engine?.metronome?.enabled = metronomeOn }
 
     val view = LocalView.current
     DisposableEffect(Unit) {
@@ -157,7 +160,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                     settings.beatsPerBar = beatsPerBar; output()?.metronome?.beatsPerBar = beatsPerBar
                 },
             )
-            IconButton(onClick = { settingsSheet = true }, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = { settingsSheet = true }) {
                 GearIcon(MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -189,7 +192,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     if (tempoDialog) TempoDialog(bpm = bpm, onBpm = { bpm = it.coerceIn(30, 240); settings.bpm = bpm; output()?.metronome?.bpm = bpm }, onDismiss = { tempoDialog = false })
     if (settingsSheet) {
         ModalBottomSheet(onDismissRequest = { settingsSheet = false }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
-            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.settings), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp))
                 SettingRow(stringResource(R.string.sustain), sustain) { sustain = it; settings.sustain = it; synth()?.sustain = it }
                 SettingRow(stringResource(R.string.note_names), showNames) { showNames = it; settings.showNames = it }
@@ -290,31 +293,38 @@ private fun MetronomePill(on: Boolean, bpm: Int, beatsPerBar: Int, output: () ->
         Modifier
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .height(36.dp)
-            .padding(horizontal = 10.dp),
+            .height(40.dp)
+            .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         Box(
             Modifier
-                .size(16.dp)
-                .graphicsLayer { val s = 1f + 0.35f * hit; scaleX = s; scaleY = s }
+                .minimumInteractiveComponentSize()
                 .clip(CircleShape)
-                .background(dotColour)
                 .clickable(onClick = onToggle)
                 .semantics { contentDescription = toggleDescription },
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .size(16.dp)
+                    .graphicsLayer { val s = 1f + 0.35f * hit; scaleX = s; scaleY = s }
+                    .clip(CircleShape)
+                    .background(dotColour),
+            )
+        }
         Text(
             "$bpm",
             style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.clickable(onClick = onTempoTap),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onTempoTap).minimumInteractiveComponentSize().padding(horizontal = 4.dp),
         )
         Text(
             if (beatsPerBar == 6) "6/8" else "$beatsPerBar/4",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.clickable(onClick = onCycleBeats),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onCycleBeats).minimumInteractiveComponentSize().padding(horizontal = 4.dp),
         )
     }
 }
@@ -427,10 +437,13 @@ private fun Keyboard(
             releasedAt.entries.filter { frame - it.value > 220_000_000L }.forEach { releasedAt.remove(it.key) }
         }
     }
-    val textSizePx = with(LocalDensity.current) { 11.sp.toPx() }
+    val density = LocalDensity.current
+    val textSizePx = with(density) { 11.sp.toPx() }
+    val dp = with(density) { 1.dp.toPx() }
     val inScale = scale?.pitchClasses?.toSet()
     val tonic = scale?.tonic
-    val feltPx = with(LocalDensity.current) { 4.dp.toPx() }
+    val feltPx = 4f * dp
+    val travelPx = 4f * dp
 
     BoxWithConstraints(modifier.clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(6.dp)) {
         val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
@@ -442,11 +455,11 @@ private fun Keyboard(
         /** 0 = up, 1 = down: eased on the way down, a small overshoot on the way back up. */
         fun depth(midi: Int): Float {
             val now = frame
-            pressedAt[midi]?.let { if (pressed.containsKey(midi)) return EaseOutCubic.transform(min(1f, (now - it) / 60_000_000f)) }
+            pressedAt[midi]?.let { if (pressed.containsKey(midi)) return EaseOutCubic.transform(((now - it) / 60_000_000f).coerceIn(0f, 1f)) }
             releasedAt[midi]?.let {
                 val t = ((now - it) / 180_000_000f).coerceIn(0f, 1f)
                 val eased = 1f - EaseOutCubic.transform(t)
-                return eased - 0.08f * kotlin.math.sin(t * Math.PI).toFloat() // dips below rest, then settles
+                return eased - 0.25f * kotlin.math.sin(t * Math.PI).toFloat() // dips a dp below rest, then settles
             }
             return 0f
         }
@@ -462,12 +475,14 @@ private fun Keyboard(
                         synth()?.noteOn(key.midi, velocity)
                         if (haptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         pressed[key.midi] = (pressed[key.midi] ?: 0) + 1
-                        pressedAt[key.midi] = System.nanoTime()
+                        val now = System.nanoTime()
+                        pressedAt[key.midi] = now
+                        frame = now // the frame clock may be stale after idle; never draw a negative age
                         releasedAt.remove(key.midi)
                     }
                     fun release(key: KeyboardLayout.Key) {
                         val n = (pressed[key.midi] ?: 1) - 1
-                        if (n <= 0) { pressed.remove(key.midi); synth()?.noteOff(key.midi); releasedAt[key.midi] = System.nanoTime() } else pressed[key.midi] = n
+                        if (n <= 0) { pressed.remove(key.midi); synth()?.noteOff(key.midi); val now = System.nanoTime(); releasedAt[key.midi] = now; frame = now } else pressed[key.midi] = n
                     }
                     awaitPointerEventScope {
                         while (true) {
@@ -476,10 +491,12 @@ private fun Keyboard(
                                 val id = change.id
                                 val current = byPointer[id]
                                 if (change.pressed) {
-                                    val key = layout.keyAt(change.position.x, change.position.y - feltPx)
+                                    // A touch on the felt strip counts as the top of the key beneath it.
+                                    val y = (change.position.y - feltPx).coerceAtLeast(0f)
+                                    val key = layout.keyAt(change.position.x, y)
                                     if (key?.midi != current?.midi) {
                                         current?.let { release(it) }
-                                        if (key != null) { byPointer[id] = key; press(key, change.position.y - feltPx) } else byPointer.remove(id)
+                                        if (key != null) { byPointer[id] = key; press(key, y) } else byPointer.remove(id)
                                     }
                                 } else if (current != null) {
                                     byPointer.remove(id)
@@ -492,7 +509,7 @@ private fun Keyboard(
                 },
         ) {
             val paint = android.graphics.Paint().apply { textSize = textSizePx; textAlign = android.graphics.Paint.Align.CENTER; isAntiAlias = true }
-            val radius = 12f
+            val radius = 5f * dp
             // The felt strip where the keys disappear under the fallboard.
             drawRect(Felt, Offset(0f, 0f), Size(size.width, feltPx))
             translate(0f, feltPx) {
@@ -502,8 +519,8 @@ private fun Keyboard(
                     val down = pressed.containsKey(k.midi)
                     val lit = pc in litPitchClasses
                     val outOfScale = inScale != null && pc !in inScale
-                    val top = d * 7f
-                    val face = keyPath(k.left + 1.5f, top, k.width - 3f, k.height - top - 1f, radius)
+                    val top = d * travelPx
+                    val face = keyPath(k.left + 0.6f * dp, top, k.width - 1.2f * dp, k.height - top - 0.5f * dp, radius)
                     val (hi, lo) = when {
                         outOfScale -> IvoryDim to IvoryDim.copy(red = IvoryDim.red * 0.9f, green = IvoryDim.green * 0.9f, blue = IvoryDim.blue * 0.9f)
                         else -> Ivory to IvoryShade
@@ -511,15 +528,15 @@ private fun Keyboard(
                     // Light from above: brighter at the top, warmer at the bottom.
                     drawPath(face, Brush.verticalGradient(0f to hi, 1f to lo, startY = top, endY = k.height))
                     // Soft inner shadow on the left edge where the neighbouring key overlaps.
-                    drawRect(Brush.horizontalGradient(0f to Color(0x30000000), 1f to Color.Transparent, startX = k.left + 1.5f, endX = k.left + 1.5f + k.width * 0.12f), Offset(k.left + 1.5f, top), Size(k.width * 0.12f, k.height - top))
-                    if (d > 0f) drawRect(Brush.verticalGradient(0f to Color(0x55000000), 1f to Color.Transparent, startY = top, endY = top + 14f * d), Offset(k.left + 1.5f, top), Size(k.width - 3f, 14f * d))
+                    drawRect(Brush.horizontalGradient(0f to Color(0x30000000), 1f to Color.Transparent, startX = k.left, endX = k.left + k.width * 0.12f), Offset(k.left, top), Size(k.width * 0.12f, k.height - top))
+                    if (d > 0f) drawRect(Brush.verticalGradient(0f to Color(0x55000000), 1f to Color.Transparent, startY = top, endY = top + 6f * dp * d), Offset(k.left, top), Size(k.width, 6f * dp * d))
                     // Press feedback as light: a teal glow rising from the bottom edge.
                     if (down || lit || d > 0f) {
                         val strength = if (down) 1f else if (lit) 0.6f else d
                         drawPath(face, Brush.verticalGradient(0f to Color.Transparent, 0.55f to Color.Transparent, 1f to TealGlow.copy(alpha = 0.55f * strength), startY = top, endY = k.height))
                     }
-                    if (inScale != null && !outOfScale) drawCircle(Teal.copy(alpha = if (pc == tonic) 1f else 0.5f), radius = if (pc == tonic) 5f else 3.5f, center = Offset(k.left + k.width / 2, k.height - textSizePx * 2.6f))
-                    if (k.midi == 60 && inScale == null) drawCircle(Color(0xFF8A847B), radius = 3.5f, center = Offset(k.left + k.width / 2, k.height - textSizePx * 2.6f))
+                    if (inScale != null && !outOfScale) drawCircle(Teal.copy(alpha = if (pc == tonic) 1f else 0.5f), radius = (if (pc == tonic) 4.5f else 3f) * dp, center = Offset(k.left + k.width / 2, k.height - textSizePx * 2.6f))
+                    if (k.midi == 60 && inScale == null) drawCircle(Color(0xFF8A847B), radius = 3f * dp, center = Offset(k.left + k.width / 2, k.height - textSizePx * 2.6f))
                     if (showNames || pc == 0) {
                         paint.color = if (pc == tonic) android.graphics.Color.rgb(15, 118, 110) else android.graphics.Color.argb(if (pc == 0) 200 else 140, 90, 86, 80)
                         paint.isFakeBoldText = pc == 0
@@ -531,16 +548,16 @@ private fun Keyboard(
                     val d = depth(k.midi)
                     val down = pressed.containsKey(k.midi)
                     val lit = pc in litPitchClasses
-                    val h = k.height * (1f - 0.07f * d)
-                    val body = keyPath(k.left, 0f, k.width, h, 7f)
+                    val h = k.height - travelPx * 0.9f * d
+                    val body = keyPath(k.left, 0f, k.width, h, 3f * dp)
                     drawPath(body, Brush.verticalGradient(0f to EbonyTop, 0.12f to Ebony, 1f to Color(0xFF0E0D0C)))
                     // Gloss along the top edge, dimmer when pressed.
-                    drawRect(Brush.verticalGradient(0f to Color(0x66FFFFFF).copy(alpha = 0.35f * (1f - 0.6f * d)), 1f to Color.Transparent), Offset(k.left + 2f, 0f), Size(k.width - 4f, h * 0.14f))
+                    drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = (0.35f * (1f - 0.6f * d)).coerceIn(0f, 1f)), 1f to Color.Transparent, startY = 0f, endY = h * 0.14f), Offset(k.left + dp, 0f), Size(k.width - 2f * dp, h * 0.14f))
                     if (down || lit || d > 0f) {
                         val strength = if (down) 1f else if (lit) 0.6f else d
                         drawPath(body, Brush.verticalGradient(0f to Color.Transparent, 0.5f to Color.Transparent, 1f to Teal.copy(alpha = 0.75f * strength), startY = 0f, endY = h))
                     }
-                    if (inScale != null && pc in inScale) drawCircle(Teal.copy(alpha = if (pc == tonic) 1f else 0.6f), radius = if (pc == tonic) 4.5f else 3f, center = Offset(k.left + k.width / 2, h - 16f))
+                    if (inScale != null && pc in inScale) drawCircle(Teal.copy(alpha = if (pc == tonic) 1f else 0.6f), radius = (if (pc == tonic) 4f else 2.5f) * dp, center = Offset(k.left + k.width / 2, h - 8f * dp))
                 }
             }
         }
