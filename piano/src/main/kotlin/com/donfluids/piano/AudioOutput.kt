@@ -13,6 +13,7 @@ class AudioOutput(context: Context, private val onError: (String) -> Unit) {
         ?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48000
     val synth = PianoSynth(sampleRate)
     val metronome = Metronome(sampleRate)
+    val reverb = Reverb(sampleRate)
 
     private var thread: Thread? = null
     @Volatile private var running = false
@@ -53,6 +54,7 @@ class AudioOutput(context: Context, private val onError: (String) -> Unit) {
             track.play()
             while (running) {
                 synth.render(buffer, block)
+                reverb.process(buffer, block)
                 // The device plays this block roughly one buffer after we hand it over.
                 metronome.mix(buffer, block, System.nanoTime() + (bufferFrames.toDouble() / sampleRate * 1e9).toLong())
                 val written = track.write(buffer, 0, block, AudioTrack.WRITE_BLOCKING)

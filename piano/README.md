@@ -15,7 +15,12 @@ and installs as its own app (`com.donfluids.piano`).
   sound it and light its notes on the keyboard.
 - **Metronome**: start/stop, tempo, and 2/4, 3/4, 4/4 or 6/8, with an accented downbeat and
   a dot that flashes on the metronome's own clock.
-- Keys sink when pressed. Octave, sustain, names, tone, scale and tempo are remembered.
+- A strip above the keyboard shows C1 to B7 with the visible octaves highlighted; drag it or
+  tap to move the keyboard.
+- **Room** adds a light reverb; **Tick** gives a haptic tap on each key press; a volume
+  slider sits in the top row.
+- Keys sink when pressed. Octave, sustain, names, tone, scale, tempo, volume, room and tick
+  are remembered.
 - Audio stops when the app leaves the foreground.
 
 ```

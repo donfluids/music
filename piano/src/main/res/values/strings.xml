@@ -18,4 +18,8 @@
     <string name="bpm">bpm</string>
     <string name="beats_per_bar">%1$d/4</string>
     <string name="done">Done</string>
+    <string name="reverb">Room</string>
+    <string name="haptics">Tick</string>
+    <string name="volume">Volume</string>
+    <string name="octave_strip">Octave strip: drag to move the keyboard</string>
 </resources>

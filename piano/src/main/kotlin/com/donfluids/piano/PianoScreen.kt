@@ -24,6 +24,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,8 +53,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +73,9 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var bpm by remember { mutableStateOf(settings.bpm) }
     var beatsPerBar by remember { mutableStateOf(settings.beatsPerBar) }
     var metronomeOn by remember { mutableStateOf(false) }
+    var volume by remember { mutableStateOf(settings.volume) }
+    var reverb by remember { mutableStateOf(settings.reverb) }
+    var haptics by remember { mutableStateOf(settings.haptics) }
     var scaleDialog by remember { mutableStateOf(false) }
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val octaves = if (landscape) 2 else 1
@@ -109,6 +115,15 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 onClick = { scaleDialog = true },
                 label = { Text(scale?.label ?: stringResource(R.string.scale)) },
             )
+            FilterChip(selected = reverb, onClick = { reverb = !reverb; settings.reverb = reverb; output()?.reverb?.enabled = reverb }, label = { Text(stringResource(R.string.reverb)) })
+            FilterChip(selected = haptics, onClick = { haptics = !haptics; settings.haptics = haptics }, label = { Text(stringResource(R.string.haptics)) })
+            Text(stringResource(R.string.volume), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Slider(
+                value = volume,
+                onValueChange = { volume = it; synth()?.volume = it },
+                onValueChangeFinished = { settings.volume = volume },
+                modifier = Modifier.width(140.dp).semantics { contentDescription = "Volume" },
+            )
         }
         // Row 2: metronome, and the chords of the chosen scale.
         Row(
@@ -138,16 +153,77 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             }
         }
         if (error != null) Text(error, color = Color(0xFFF2997F), style = MaterialTheme.typography.bodyMedium)
+        OctaveStrip(
+            baseOctave = baseOctave, octaves = octaves,
+            onMove = { baseOctave = it.coerceIn(1, 8 - octaves); settings.baseOctave = baseOctave },
+        )
         Keyboard(
             baseOctave = baseOctave, octaves = octaves, showNames = showNames, scale = scale,
             litPitchClasses = chordHeld.values.flatten().toSet(),
             synth = synth,
+            haptics = haptics,
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
     }
 
     if (scaleDialog) {
         ScaleDialog(current = scale, onPick = { scale = it; settings.scale = it; scaleDialog = false }, onDismiss = { scaleDialog = false })
+    }
+}
+
+/**
+ * The whole C1–B7 range as a thin bar; the visible octaves are highlighted. Drag the window
+ * or tap elsewhere to move the keyboard.
+ */
+@Composable
+private fun OctaveStrip(baseOctave: Int, octaves: Int, onMove: (Int) -> Unit) {
+    val first = 1
+    val total = 7 // octaves 1..7
+    val primary = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val tick = MaterialTheme.colorScheme.onSurfaceVariant
+    val description = stringResource(R.string.octave_strip)
+    val textSizePx = with(LocalDensity.current) { 10.sp.toPx() }
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(22.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .semantics { contentDescription = description }
+            .pointerInput(octaves) {
+                awaitPointerEventScope {
+                    var grabOffset = 0f
+                    while (true) {
+                        val down = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: continue
+                        val perOctave = size.width / total.toFloat()
+                        val windowLeft = (baseOctave - first) * perOctave
+                        val inWindow = down.position.x in windowLeft..(windowLeft + octaves * perOctave)
+                        grabOffset = if (inWindow) down.position.x - windowLeft else octaves * perOctave / 2f
+                        var x = down.position.x
+                        while (true) {
+                            val target = first + Math.round((x - grabOffset) / perOctave)
+                            onMove(target)
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull() ?: break
+                            if (!c.pressed) break
+                            x += c.positionChange().x
+                            c.consume()
+                        }
+                    }
+                }
+            },
+    ) {
+        val perOctave = size.width / total
+        drawRoundRect(track, Offset.Zero, size, CornerRadius(6f, 6f))
+        val left = (baseOctave - first) * perOctave
+        drawRoundRect(primary.copy(alpha = 0.35f), Offset(left, 0f), Size(octaves * perOctave, size.height), CornerRadius(6f, 6f))
+        drawRoundRect(primary, Offset(left, 0f), Size(octaves * perOctave, size.height), CornerRadius(6f, 6f), style = Stroke(2f))
+        val paint = android.graphics.Paint().apply { textSize = textSizePx; textAlign = android.graphics.Paint.Align.CENTER; isAntiAlias = true; color = android.graphics.Color.argb(255, 168, 163, 155) }
+        for (o in 0 until total) {
+            val x = o * perOctave
+            if (o > 0) drawLine(tick, Offset(x, 0f), Offset(x, size.height), 1f)
+            drawContext.canvas.nativeCanvas.drawText("C${o + first}", x + perOctave / 2, size.height * 0.72f, paint)
+        }
     }
 }
 
@@ -232,8 +308,9 @@ private fun ScaleDialog(current: Theory.Scale?, onPick: (Theory.Scale?) -> Unit,
 @Composable
 private fun Keyboard(
     baseOctave: Int, octaves: Int, showNames: Boolean, scale: Theory.Scale?, litPitchClasses: Set<Int>,
-    synth: () -> PianoSynth?, modifier: Modifier,
+    synth: () -> PianoSynth?, haptics: Boolean, modifier: Modifier,
 ) {
+    val view = LocalView.current
     /** Pointers currently on each MIDI note. */
     val pressed = remember { mutableStateMapOf<Int, Int>() }
     /** Press and release times, for the key-travel animation. */
@@ -272,11 +349,12 @@ private fun Keyboard(
             Modifier
                 .fillMaxSize()
                 .semantics { contentDescription = "Piano keyboard, ${layout.whiteCount} white keys from ${KeyboardLayout.noteName(layout.baseMidi)}" }
-                .pointerInput(layout) {
+                .pointerInput(layout, haptics) {
                     val byPointer = HashMap<PointerId, KeyboardLayout.Key>()
                     fun press(key: KeyboardLayout.Key, y: Float) {
                         val velocity = 0.55f + 0.45f * (y / key.height).coerceIn(0f, 1f)
                         synth()?.noteOn(key.midi, velocity)
+                        if (haptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         pressed[key.midi] = (pressed[key.midi] ?: 0) + 1
                         pressedAt[key.midi] = System.nanoTime()
                         releasedAt.remove(key.midi)

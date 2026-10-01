@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
         output = AudioOutput(this) { message -> error = message }.also {
             it.synth.tone = settings.tone
             it.synth.sustain = settings.sustain
+            it.synth.volume = settings.volume
+            it.reverb.enabled = settings.reverb
             it.metronome.bpm = settings.bpm
             it.metronome.beatsPerBar = settings.beatsPerBar
             it.start()

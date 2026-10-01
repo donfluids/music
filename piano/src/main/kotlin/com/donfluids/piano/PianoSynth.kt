@@ -19,6 +19,9 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
     /** The instrument every new note uses. */
     @Volatile var tone: Tone = Tone.PIANO
 
+    /** Output level, 0..1. */
+    @Volatile var volume: Float = 0.8f
+
     private class Voice {
         var midi = -1
         var active = false
@@ -117,7 +120,8 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
             }
         }
         // Gentle limiter so many keys at once do not clip harshly.
-        for (i in 0 until frames) out[i] = tanh(out[i] * MASTER).toFloat()
+        val gain = volume
+        for (i in 0 until frames) out[i] = tanh(out[i] * MASTER).toFloat() * gain
     }
 
     /** Instruments: harmonic levels, whether partials decay while held, and envelope times. */

@@ -24,6 +24,15 @@ class Settings(context: Context) {
         set(v) = prefs.edit().apply {
             if (v == null) { remove("scaleTonic"); remove("scaleMinor") } else { putInt("scaleTonic", v.tonic); putBoolean("scaleMinor", v.minor) }
         }.apply()
+    var volume: Float
+        get() = prefs.getFloat("volume", 0.8f)
+        set(v) = prefs.edit().putFloat("volume", v).apply()
+    var reverb: Boolean
+        get() = prefs.getBoolean("reverb", true)
+        set(v) = prefs.edit().putBoolean("reverb", v).apply()
+    var haptics: Boolean
+        get() = prefs.getBoolean("haptics", true)
+        set(v) = prefs.edit().putBoolean("haptics", v).apply()
     var bpm: Int
         get() = prefs.getInt("bpm", 100)
         set(v) = prefs.edit().putInt("bpm", v).apply()
