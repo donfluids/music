@@ -431,8 +431,9 @@ private fun DrawScope.keyPath(left: Float, top: Float, width: Float, height: Flo
 }
 
 /**
- * The keyboard. One finger plays. Two fingers anywhere, or one finger on the felt bar, drag
- * the keyboard sideways; it snaps to a key edge when released.
+ * The keyboard. Fingers play keys, as many as you like. A drag on the felt bar scrolls, and so
+ * do two or more fingers that move sideways together by more than a key's width; until they
+ * do, they play. The keyboard snaps to a key edge when a scroll ends.
  */
 @Composable
 private fun Keyboard(
@@ -498,7 +499,9 @@ private fun Keyboard(
                 .semantics { contentDescription = "Piano keyboard, $visibleWhite white keys from ${KeyboardLayout.noteName(layout.leftmostOctaveC(scroll.value))}" }
                 .pointerInput(layout, haptics) {
                     val byPointer = HashMap<PointerId, KeyboardLayout.Key>()
+                    val downAt = HashMap<PointerId, Offset>()
                     var scrolling = false
+                    val slop = layout.whiteWidth * 0.9f
                     fun press(key: KeyboardLayout.Key, y: Float) {
                         val velocity = 0.55f + 0.45f * (y / key.height).coerceIn(0f, 1f)
                         synth()?.noteOn(key.midi, velocity)
@@ -518,9 +521,17 @@ private fun Keyboard(
                         while (true) {
                             val event = awaitPointerEvent()
                             val down = event.changes.filter { it.pressed }
-                            // Enter scroll mode on two fingers, or one finger landing on the felt bar.
-                            val startScroll = !scrolling && (down.size >= 2 || (down.size == 1 && down[0].position.y < feltPx && byPointer.isEmpty()))
-                            if (startScroll) { scrolling = true; releaseAll(byPointer, ::release) }
+                            for (c in down) if (c.id !in downAt) downAt[c.id] = c.position
+                            event.changes.filter { !it.pressed }.forEach { downAt.remove(it.id) }
+                            // Scroll when a finger lands on the felt bar, or when two or more fingers have
+                            // all moved sideways the same way by about a key's width. Until then they play.
+                            val onFelt = down.size == 1 && downAt[down[0].id]?.let { it.y < feltPx } == true && byPointer.isEmpty()
+                            val twoFingerDrag = down.size >= 2 && down.all { c ->
+                                val start = downAt[c.id] ?: c.position
+                                val dx = c.position.x - start.x
+                                kotlin.math.abs(dx) > slop && kotlin.math.abs(dx) > kotlin.math.abs(c.position.y - start.y)
+                            } && down.map { kotlin.math.sign(it.position.x - (downAt[it.id]?.x ?: it.position.x)) }.distinct().size == 1
+                            if (!scrolling && (onFelt || twoFingerDrag)) { scrolling = true; releaseAll(byPointer, ::release) }
                             if (scrolling) {
                                 if (down.isEmpty()) {
                                     scrolling = false

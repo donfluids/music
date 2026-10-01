@@ -4,8 +4,9 @@ A small touch piano that lives alongside LiveKey in this repository as the `:pia
 and installs as its own app (`com.donfluids.piano`).
 
 - Opens in landscape (either way up) showing two octaves of a continuous C1 to B7 keyboard.
-  Drag with two fingers anywhere on the keys, or with one finger on the red felt bar above
-  them, to slide the keyboard up or down the range; it snaps to a key edge when released. The
+  Drag the red felt bar above the keys to slide the keyboard up or down the range, or push
+  two fingers sideways together across the keys; it snaps to a key edge when released. Two
+  fingers that simply land play two notes. The
   strip in the control row shows where you are and can be dragged or tapped too.
 - Multi-touch: play chords, slide between keys. Pressing lower on a key plays louder. Keys
   sink with an eased travel and light up from the bottom edge in teal while held.
