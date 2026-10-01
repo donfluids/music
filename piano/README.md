@@ -3,7 +3,7 @@
 A small touch piano that lives alongside LiveKey in this repository as the `:piano` module
 and installs as its own app (`com.donfluids.piano`).
 
-- One octave in portrait, two in landscape, starting at C4; − / + shift the octave.
+- Opens in landscape (either way up) with two octaves starting at C4; − / + shift the octave.
 - Multi-touch: play chords, slide between keys. Pressing lower on a key plays louder.
 - **Sustain** keeps lifted keys ringing; **Names** toggles note names on the white keys. A
   small dot marks middle C.
