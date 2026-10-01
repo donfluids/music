@@ -16,6 +16,9 @@ import kotlin.math.tanh
  */
 class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
 
+    /** The instrument every new note uses. */
+    @Volatile var tone: Tone = Tone.PIANO
+
     private class Voice {
         var midi = -1
         var active = false
@@ -53,6 +56,7 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
                 ?: voices.firstOrNull { !it.active }
                 ?: voices.minByOrNull { it.startedAt }!!
             val freq = 440.0 * 2.0.pow((midi - 69) / 12.0)
+            val t = tone
             v.midi = midi
             v.active = true
             v.held = true
@@ -60,15 +64,16 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
             v.phase = 0.0
             v.phaseStep = 2.0 * PI * freq / sampleRate
             // Lower notes ring longer; each higher harmonic dies off sooner than the one below.
+            // An organ does not decay at all while the key is held.
             val baseTau = 3.0 * (220.0 / freq).pow(0.4).coerceIn(0.4, 6.0)
             for (k in 0 until HARMONICS) {
                 val n = k + 1
-                v.harmonicAmp[k] = HARMONIC_LEVEL[k] * vel * (if (n * freq > sampleRate / 2.5) 0.0 else 1.0)
-                v.harmonicDecay[k] = exp(-1.0 / (sampleRate * baseTau / (1.0 + 0.7 * k)))
+                v.harmonicAmp[k] = t.levels[k] * vel * (if (n * freq > sampleRate / 2.5) 0.0 else 1.0)
+                v.harmonicDecay[k] = if (t.decays) exp(-1.0 / (sampleRate * baseTau / (1.0 + 0.7 * k))) else 1.0
             }
             v.envelope = 0.0
-            v.attackStep = 1.0 / (sampleRate * 0.003)
-            v.releaseFactor = exp(-1.0 / (sampleRate * 0.12))
+            v.attackStep = 1.0 / (sampleRate * t.attackSeconds)
+            v.releaseFactor = exp(-1.0 / (sampleRate * t.releaseSeconds))
             v.startedAt = sequence++
         }
     }
@@ -115,9 +120,15 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
         for (i in 0 until frames) out[i] = tanh(out[i] * MASTER).toFloat()
     }
 
+    /** Instruments: harmonic levels, whether partials decay while held, and envelope times. */
+    enum class Tone(val label: String, val levels: DoubleArray, val decays: Boolean, val attackSeconds: Double, val releaseSeconds: Double) {
+        PIANO("Piano", doubleArrayOf(1.0, 0.55, 0.3, 0.2, 0.12, 0.08), true, 0.003, 0.12),
+        ELECTRIC("E-piano", doubleArrayOf(1.0, 0.25, 0.08, 0.3, 0.05, 0.02), true, 0.004, 0.2),
+        ORGAN("Organ", doubleArrayOf(0.8, 0.6, 0.45, 0.35, 0.0, 0.3), false, 0.008, 0.05),
+    }
+
     companion object {
         const val HARMONICS = 6
-        private val HARMONIC_LEVEL = doubleArrayOf(1.0, 0.55, 0.3, 0.2, 0.12, 0.08)
         private const val MASTER = 0.35f
 
         private const val TABLE_SIZE = 4096

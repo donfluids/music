@@ -15,6 +15,7 @@ class MainActivity : ComponentActivity() {
 
     private var output: AudioOutput? = null
     private var error by mutableStateOf<String?>(null)
+    private val settings by lazy { Settings(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +33,7 @@ class MainActivity : ComponentActivity() {
                     onSurfaceVariant = Color(0xFFA8A39B),
                 ),
             ) {
-                PianoScreen(synth = { output?.synth }, error = error)
+                PianoScreen(output = { output }, settings = settings, error = error)
             }
         }
     }
@@ -41,7 +42,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         error = null
-        output = AudioOutput(this) { message -> error = message }.also { it.start() }
+        output = AudioOutput(this) { message -> error = message }.also {
+            it.synth.tone = settings.tone
+            it.synth.sustain = settings.sustain
+            it.metronome.bpm = settings.bpm
+            it.metronome.beatsPerBar = settings.beatsPerBar
+            it.start()
+        }
     }
 
     override fun onStop() {
