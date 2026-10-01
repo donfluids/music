@@ -6,9 +6,10 @@ import android.content.Context
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("minipiano", Context.MODE_PRIVATE)
 
-    var baseOctave: Int
-        get() = prefs.getInt("octave", 4)
-        set(v) = prefs.edit().putInt("octave", v).apply()
+    /** Keyboard window position in white keys from C1; the old whole-octave setting is honoured once. */
+    var scroll: Float
+        get() = if (prefs.contains("scroll")) prefs.getFloat("scroll", 21f) else KeyboardLayout.scrollForOctave(prefs.getInt("octave", 4))
+        set(v) = prefs.edit().putFloat("scroll", v).apply()
     var sustain: Boolean
         get() = prefs.getBoolean("sustain", false)
         set(v) = prefs.edit().putBoolean("sustain", v).apply()

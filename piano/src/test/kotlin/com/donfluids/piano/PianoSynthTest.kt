@@ -78,16 +78,21 @@ class PianoSynthTest {
 
     @Test
     fun keyboardLayoutMapsNotes() {
-        val l = KeyboardLayout(baseOctave = 4, octaves = 2, width = 1400f, height = 400f)
-        assertEquals(14, l.whiteKeys.size)
-        assertEquals(10, l.blackKeys.size)
-        assertEquals(60, l.whiteKeys[0].midi)              // C4
-        assertEquals(71, l.whiteKeys[6].midi)              // B4
-        assertEquals(61, l.blackKeys[0].midi)              // C#4
-        assertEquals(61, l.keyAt(105f, 10f)?.midi)         // black key on top
-        assertEquals(60, l.keyAt(95f, 300f)?.midi)         // white key below it, left of centre
-        assertEquals(62, l.keyAt(105f, 300f)?.midi)        // and D just right of it
+        val l = KeyboardLayout(visibleWhite = 14, viewWidth = 1400f, height = 400f)
+        assertEquals(49, l.whiteKeys.size)
+        assertEquals(35, l.blackKeys.size)
+        assertEquals(24, l.whiteKeys[0].midi)              // C1
+        assertEquals(35f, l.maxScroll, 0f)
+        val c4 = KeyboardLayout.scrollForOctave(4)
+        assertEquals(21f, c4, 0f)
+        assertEquals(60, l.keyAt(95f, 300f, c4)?.midi)     // C4 at the left edge when scrolled to octave 4
+        assertEquals(61, l.keyAt(105f, 10f, c4)?.midi)     // C#4 on top
+        assertEquals(62, l.keyAt(105f, 300f, c4)?.midi)    // D4 just right of it
+        assertEquals(83, l.keyAt(1395f, 300f, c4)?.midi)   // B5 at the right edge
+        assertEquals(62, l.keyAt(5f, 300f, c4 + 1f)?.midi) // scrolled one white key: D4 is now leftmost
+        assertEquals(60, l.leftmostOctaveC(c4))
+        assertEquals(60, l.leftmostOctaveC(c4 + 3f))
         assertEquals("C#4", KeyboardLayout.noteName(61))
-        assertEquals("B5", KeyboardLayout.noteName(l.whiteKeys.last().midi))
+        assertTrue(l.visible(c4, l.whiteKeys).size in 14..16)
     }
 }

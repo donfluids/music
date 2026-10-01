@@ -1,7 +1,9 @@
 package com.donfluids.piano
 
 import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,6 +47,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -73,6 +76,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.min
@@ -89,7 +93,9 @@ private val TealGlow = Color(0xFF2DD4BF)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) {
-    var baseOctave by remember { mutableStateOf(settings.baseOctave) }
+    /** Window position in white keys from C1, animatable so the keyboard can snap and glide. */
+    val scroll = remember { Animatable(settings.scroll) }
+    val scope = rememberCoroutineScope()
     var sustain by remember { mutableStateOf(settings.sustain) }
     var showNames by remember { mutableStateOf(settings.showNames) }
     var tone by remember { mutableStateOf(settings.tone) }
@@ -103,7 +109,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var scaleDialog by remember { mutableStateOf(false) }
     var tempoDialog by remember { mutableStateOf(false) }
     var settingsSheet by remember { mutableStateOf(false) }
-    val octaves = 2
+    val visibleWhite = 14
     val synth: () -> PianoSynth? = { output()?.synth }
     val chordHeld = remember { mutableStateMapOf<Int, List<Int>>() }
     // The audio engine is recreated whenever the activity returns to the front; keep it in step.
@@ -131,8 +137,9 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             OctaveStrip(
-                baseOctave = baseOctave, octaves = octaves,
-                onMove = { baseOctave = it.coerceIn(1, 8 - octaves); settings.baseOctave = baseOctave },
+                scroll = scroll.value, visibleWhite = visibleWhite,
+                onMove = { target -> scope.launch { scroll.snapTo(target.coerceIn(0f, (KeyboardLayout.WHITE_COUNT - visibleWhite).toFloat())) } },
+                onRelease = { scope.launch { scroll.animateTo(Math.round(scroll.value).toFloat(), tween(120)); settings.scroll = scroll.value } },
                 modifier = Modifier.weight(1f),
             )
             SingleChoiceSegmentedButtonRow(Modifier.height(36.dp)) {
@@ -168,9 +175,11 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
 
         // Chord row sits directly above the keys so the eye drops from chord to notes.
         scale?.let { sc ->
+            // Chords are voiced from the lowest C in view.
+            val octaveC = KeyboardLayout.FIRST_MIDI + 12 * (Math.round(scroll.value) / 7)
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 sc.chords().forEachIndexed { i, chord ->
-                    val rootMidi = 12 * (baseOctave + 1) + chord.pitchClasses[0] + (if (chord.pitchClasses[0] < sc.tonic) 12 else 0)
+                    val rootMidi = octaveC + chord.pitchClasses[0] + (if (chord.pitchClasses[0] < sc.tonic) 12 else 0)
                     val notes = chord.pitchClasses.map { pc -> rootMidi + Math.floorMod(pc - chord.pitchClasses[0], 12) }
                     ChordButton(
                         chord, held = chordHeld.containsKey(i),
@@ -181,9 +190,10 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             }
         }
         Keyboard(
-            baseOctave = baseOctave, octaves = octaves, showNames = showNames, scale = scale,
+            scroll = scroll, visibleWhite = visibleWhite, showNames = showNames, scale = scale,
             litPitchClasses = chordHeld.values.flatten().toSet(),
             synth = synth, haptics = haptics,
+            onScrollSettled = { settings.scroll = it },
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
     }
@@ -228,9 +238,8 @@ private fun GearIcon(colour: Color) {
 
 /** C1 to B7 as a thin bar; the visible window is highlighted. Drag it or tap to move. */
 @Composable
-private fun OctaveStrip(baseOctave: Int, octaves: Int, onMove: (Int) -> Unit, modifier: Modifier = Modifier) {
-    val first = 1
-    val total = 7
+private fun OctaveStrip(scroll: Float, visibleWhite: Int, onMove: (Float) -> Unit, onRelease: () -> Unit, modifier: Modifier = Modifier) {
+    val total = KeyboardLayout.WHITE_COUNT.toFloat()
     val primary = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.surfaceVariant
     val description = stringResource(R.string.octave_strip)
@@ -240,33 +249,34 @@ private fun OctaveStrip(baseOctave: Int, octaves: Int, onMove: (Int) -> Unit, mo
             .height(30.dp)
             .clip(RoundedCornerShape(8.dp))
             .semantics { contentDescription = description }
-            .pointerInput(octaves) {
+            .pointerInput(visibleWhite) {
                 awaitPointerEventScope {
                     while (true) {
                         val down = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: continue
-                        val perOctave = size.width / total.toFloat()
-                        val windowLeft = (baseOctave - first) * perOctave
-                        val inWindow = down.position.x in windowLeft..(windowLeft + octaves * perOctave)
-                        val grabOffset = if (inWindow) down.position.x - windowLeft else octaves * perOctave / 2f
+                        val perWhite = size.width / total
+                        val windowLeft = scroll * perWhite
+                        val inWindow = down.position.x in windowLeft..(windowLeft + visibleWhite * perWhite)
+                        val grabOffset = if (inWindow) down.position.x - windowLeft else visibleWhite * perWhite / 2f
                         var x = down.position.x
                         while (true) {
-                            onMove(first + Math.round((x - grabOffset) / perOctave))
+                            onMove((x - grabOffset) / perWhite)
                             val c = awaitPointerEvent().changes.firstOrNull() ?: break
                             if (!c.pressed) break
                             x += c.positionChange().x
                             c.consume()
                         }
+                        onRelease()
                     }
                 }
             },
     ) {
-        val perOctave = size.width / total
+        val perWhite = size.width / total
         drawRoundRect(track, Offset.Zero, size, CornerRadius(8f, 8f))
-        val left = (baseOctave - first) * perOctave
-        drawRoundRect(primary.copy(alpha = 0.22f), Offset(left, 0f), Size(octaves * perOctave, size.height), CornerRadius(8f, 8f))
-        drawRoundRect(primary, Offset(left, 0f), Size(octaves * perOctave, size.height), CornerRadius(8f, 8f), style = Stroke(2f))
+        val left = scroll * perWhite
+        drawRoundRect(primary.copy(alpha = 0.22f), Offset(left, 0f), Size(visibleWhite * perWhite, size.height), CornerRadius(8f, 8f))
+        drawRoundRect(primary, Offset(left, 0f), Size(visibleWhite * perWhite, size.height), CornerRadius(8f, 8f), style = Stroke(2f))
         val paint = android.graphics.Paint().apply { textSize = textSizePx; textAlign = android.graphics.Paint.Align.CENTER; isAntiAlias = true; color = android.graphics.Color.argb(255, 169, 162, 153) }
-        for (o in 0 until total) drawContext.canvas.nativeCanvas.drawText("C${o + first}", o * perOctave + perOctave / 2, size.height * 0.68f, paint)
+        for (o in 0 until KeyboardLayout.OCTAVES) drawContext.canvas.nativeCanvas.drawText("C${o + 1}", (o * 7 + 3.5f) * perWhite, size.height * 0.68f, paint)
     }
 }
 
@@ -420,12 +430,17 @@ private fun DrawScope.keyPath(left: Float, top: Float, width: Float, height: Flo
     addRoundRect(RoundRect(left, top, left + width, top + height, CornerRadius.Zero, CornerRadius.Zero, CornerRadius(radius), CornerRadius(radius)))
 }
 
+/**
+ * The keyboard. One finger plays. Two fingers anywhere, or one finger on the felt bar, drag
+ * the keyboard sideways; it snaps to a key edge when released.
+ */
 @Composable
 private fun Keyboard(
-    baseOctave: Int, octaves: Int, showNames: Boolean, scale: Theory.Scale?, litPitchClasses: Set<Int>,
-    synth: () -> PianoSynth?, haptics: Boolean, modifier: Modifier,
+    scroll: Animatable<Float, *>, visibleWhite: Int, showNames: Boolean, scale: Theory.Scale?, litPitchClasses: Set<Int>,
+    synth: () -> PianoSynth?, haptics: Boolean, onScrollSettled: (Float) -> Unit, modifier: Modifier,
 ) {
     val view = LocalView.current
+    val scope = rememberCoroutineScope()
     val pressed = remember { mutableStateMapOf<Int, Int>() }
     val pressedAt = remember { mutableStateMapOf<Int, Long>() }
     val releasedAt = remember { mutableStateMapOf<Int, Long>() }
@@ -451,15 +466,19 @@ private fun Keyboard(
     val dp = with(density) { 1.dp.toPx() }
     val inScale = scale?.pitchClasses?.toSet()
     val tonic = scale?.tonic
-    val feltPx = 4f * dp
+    val feltPx = 12f * dp // tall enough to grab as a scroll bar
     val travelPx = 4f * dp
 
     BoxWithConstraints(modifier.clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(6.dp)) {
         val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
         val heightPx = with(LocalDensity.current) { maxHeight.toPx() } - feltPx
-        val layout = remember(baseOctave, octaves, widthPx, heightPx) { KeyboardLayout(baseOctave, octaves, widthPx, heightPx) }
+        val layout = remember(visibleWhite, widthPx, heightPx) { KeyboardLayout(visibleWhite, widthPx, heightPx) }
 
         DisposableEffect(layout) { onDispose { pressed.keys.toList().forEach { synth()?.noteOff(it) }; pressed.clear() } }
+        fun releaseAll(byPointer: MutableMap<PointerId, KeyboardLayout.Key>, release: (KeyboardLayout.Key) -> Unit) {
+            byPointer.values.toList().forEach { release(it) }
+            byPointer.clear()
+        }
 
         /** 0 = up, 1 = down: eased on the way down, a small overshoot on the way back up. */
         fun depth(midi: Int): Float {
@@ -476,9 +495,10 @@ private fun Keyboard(
         Canvas(
             Modifier
                 .fillMaxSize()
-                .semantics { contentDescription = "Piano keyboard, ${layout.whiteCount} white keys from ${KeyboardLayout.noteName(layout.baseMidi)}" }
+                .semantics { contentDescription = "Piano keyboard, $visibleWhite white keys from ${KeyboardLayout.noteName(layout.leftmostOctaveC(scroll.value))}" }
                 .pointerInput(layout, haptics) {
                     val byPointer = HashMap<PointerId, KeyboardLayout.Key>()
+                    var scrolling = false
                     fun press(key: KeyboardLayout.Key, y: Float) {
                         val velocity = 0.55f + 0.45f * (y / key.height).coerceIn(0f, 1f)
                         synth()?.noteOn(key.midi, velocity)
@@ -497,13 +517,33 @@ private fun Keyboard(
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
+                            val down = event.changes.filter { it.pressed }
+                            // Enter scroll mode on two fingers, or one finger landing on the felt bar.
+                            val startScroll = !scrolling && (down.size >= 2 || (down.size == 1 && down[0].position.y < feltPx && byPointer.isEmpty()))
+                            if (startScroll) { scrolling = true; releaseAll(byPointer, ::release) }
+                            if (scrolling) {
+                                if (down.isEmpty()) {
+                                    scrolling = false
+                                    scope.launch {
+                                        scroll.animateTo(Math.round(scroll.value).toFloat().coerceIn(0f, layout.maxScroll), tween(120))
+                                        onScrollSettled(scroll.value)
+                                    }
+                                } else {
+                                    val dx = down.map { it.positionChange().x }.average().toFloat()
+                                    if (dx != 0f) {
+                                        val target = (scroll.value - dx / layout.whiteWidth).coerceIn(0f, layout.maxScroll)
+                                        scope.launch { scroll.snapTo(target) }
+                                    }
+                                }
+                                event.changes.forEach { it.consume() }
+                                continue
+                            }
                             for (change in event.changes) {
                                 val id = change.id
                                 val current = byPointer[id]
                                 if (change.pressed) {
-                                    // A touch on the felt strip counts as the top of the key beneath it.
                                     val y = (change.position.y - feltPx).coerceAtLeast(0f)
-                                    val key = layout.keyAt(change.position.x, y)
+                                    val key = layout.keyAt(change.position.x, y, scroll.value)
                                     if (key?.midi != current?.midi) {
                                         current?.let { release(it) }
                                         if (key != null) { byPointer[id] = key; press(key, y) } else byPointer.remove(id)
@@ -521,10 +561,16 @@ private fun Keyboard(
             @Suppress("UNUSED_EXPRESSION") levelsVersion // read so the canvas redraws when levels change
             val paint = android.graphics.Paint().apply { textSize = textSizePx; textAlign = android.graphics.Paint.Align.CENTER; isAntiAlias = true }
             val radius = 5f * dp
-            // The felt strip where the keys disappear under the fallboard.
+            // The felt strip where the keys disappear under the fallboard; also the scroll bar.
             drawRect(Felt, Offset(0f, 0f), Size(size.width, feltPx))
-            translate(0f, feltPx) {
-                layout.whiteKeys.forEach { k ->
+            run {
+                // A small grip in the middle hints that the bar can be dragged.
+                val cx = size.width / 2
+                for (i in -1..1) drawRoundRect(Color(0x55FFFFFF), Offset(cx + i * 6f * dp - 1.5f * dp, feltPx * 0.3f), Size(3f * dp, feltPx * 0.4f), CornerRadius(1.5f * dp))
+            }
+            val scrollPx = layout.scrollPx(scroll.value)
+            translate(-scrollPx, feltPx) {
+                layout.visible(scroll.value, layout.whiteKeys).forEach { k ->
                     val pc = Math.floorMod(k.midi, 12)
                     val d = depth(k.midi)
                     val down = pressed.containsKey(k.midi)
@@ -556,7 +602,7 @@ private fun Keyboard(
                         drawContext.canvas.nativeCanvas.drawText(KeyboardLayout.noteName(k.midi), k.left + k.width / 2, k.height - textSizePx * 0.9f + top * 0.5f, paint)
                     }
                 }
-                layout.blackKeys.forEach { k ->
+                layout.visible(scroll.value, layout.blackKeys).forEach { k ->
                     val pc = Math.floorMod(k.midi, 12)
                     val d = depth(k.midi)
                     val down = pressed.containsKey(k.midi)

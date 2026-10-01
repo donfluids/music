@@ -3,8 +3,10 @@
 A small touch piano that lives alongside LiveKey in this repository as the `:piano` module
 and installs as its own app (`com.donfluids.piano`).
 
-- Opens in landscape (either way up) with two octaves starting at C4. A strip in the control
-  row shows C1 to B7 with the visible window highlighted; drag it or tap to move the keyboard.
+- Opens in landscape (either way up) showing two octaves of a continuous C1 to B7 keyboard.
+  Drag with two fingers anywhere on the keys, or with one finger on the red felt bar above
+  them, to slide the keyboard up or down the range; it snaps to a key edge when released. The
+  strip in the control row shows where you are and can be dragged or tapped too.
 - Multi-touch: play chords, slide between keys. Pressing lower on a key plays louder. Keys
   sink with an eased travel and light up from the bottom edge in teal while held.
 - **Piano**, **E-piano** and **Organ** tones, all synthesised on the fly (six harmonics; on the
