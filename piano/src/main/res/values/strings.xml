@@ -22,4 +22,8 @@
     <string name="haptics">Tick</string>
     <string name="volume">Volume</string>
     <string name="octave_strip">Octave strip: drag to move the keyboard</string>
+    <string name="settings">Settings</string>
+    <string name="tempo">Tempo</string>
+    <string name="tap_tempo">Tap</string>
+    <string name="metronome_toggle">Start or stop the metronome</string>
 </resources>
