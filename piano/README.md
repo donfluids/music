@@ -16,6 +16,10 @@ and installs as its own app (`com.donfluids.piano`).
 - **Metronome** in one pill: tap the dot to start or stop, the number for a tempo dialog with
   tap tempo, the signature to cycle 2/4, 3/4, 4/4 and 6/8. The downbeat is accented and the
   dot breathes with the beat on the metronome's own clock.
+- Keys glow while they sound, not just while a finger is on them, so sustained notes stay
+  visible. Under sustain a lifted piano key rings for at most ten seconds, and a lifted organ
+  key fades over a second or two instead of holding forever. Thirty-two voices; when they run
+  out, the quietest fading note gives way with a short fade rather than a cut.
 - The gear opens settings: sustain, note names, room (a light reverb), tick (a haptic tap on
   each key) and volume. Everything is remembered between launches.
 - Audio stops when the app leaves the foreground.

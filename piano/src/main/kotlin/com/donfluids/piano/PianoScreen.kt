@@ -430,11 +430,20 @@ private fun Keyboard(
     val pressedAt = remember { mutableStateMapOf<Int, Long>() }
     val releasedAt = remember { mutableStateMapOf<Int, Long>() }
     var frame by remember { mutableLongStateOf(System.nanoTime()) }
-    val animating = pressed.isNotEmpty() || releasedAt.isNotEmpty()
-    LaunchedEffect(animating) {
-        while (animating) {
+    /** Loudness per MIDI note as the synthesiser reports it, so the glow follows the sound. */
+    val levels = remember { FloatArray(128) }
+    var levelsVersion by remember { mutableStateOf(0) }
+    var pressCount by remember { mutableStateOf(0) }
+    // One frame loop, started by any press, that runs until nothing moves and nothing sounds.
+    LaunchedEffect(pressCount) {
+        while (true) {
             withFrameNanos { frame = it }
             releasedAt.entries.filter { frame - it.value > 220_000_000L }.forEach { releasedAt.remove(it.key) }
+            val engine = synth()
+            engine?.copyLevels(levels)
+            levelsVersion++
+            val sounding = engine != null && engine.activeVoices > 0
+            if (pressed.isEmpty() && releasedAt.isEmpty() && !sounding) break
         }
     }
     val density = LocalDensity.current
@@ -479,6 +488,7 @@ private fun Keyboard(
                         pressedAt[key.midi] = now
                         frame = now // the frame clock may be stale after idle; never draw a negative age
                         releasedAt.remove(key.midi)
+                        pressCount++
                     }
                     fun release(key: KeyboardLayout.Key) {
                         val n = (pressed[key.midi] ?: 1) - 1
@@ -508,6 +518,7 @@ private fun Keyboard(
                     }
                 },
         ) {
+            @Suppress("UNUSED_EXPRESSION") levelsVersion // read so the canvas redraws when levels change
             val paint = android.graphics.Paint().apply { textSize = textSizePx; textAlign = android.graphics.Paint.Align.CENTER; isAntiAlias = true }
             val radius = 5f * dp
             // The felt strip where the keys disappear under the fallboard.
@@ -531,8 +542,10 @@ private fun Keyboard(
                     drawRect(Brush.horizontalGradient(0f to Color(0x30000000), 1f to Color.Transparent, startX = k.left, endX = k.left + k.width * 0.12f), Offset(k.left, top), Size(k.width * 0.12f, k.height - top))
                     if (d > 0f) drawRect(Brush.verticalGradient(0f to Color(0x55000000), 1f to Color.Transparent, startY = top, endY = top + 6f * dp * d), Offset(k.left, top), Size(k.width, 6f * dp * d))
                     // Press feedback as light: a teal glow rising from the bottom edge.
-                    if (down || lit || d > 0f) {
-                        val strength = if (down) 1f else if (lit) 0.6f else d
+                    // Glow with the sound: full while the finger is down, then fading with the note itself.
+                    val sounding = if (k.midi in levels.indices) levels[k.midi] else 0f
+                    val strength = maxOf(if (down) 1f else 0f, if (lit) 0.6f else 0f, sounding * 0.85f)
+                    if (strength > 0.02f) {
                         drawPath(face, Brush.verticalGradient(0f to Color.Transparent, 0.55f to Color.Transparent, 1f to TealGlow.copy(alpha = 0.55f * strength), startY = top, endY = k.height))
                     }
                     if (inScale != null && !outOfScale) drawCircle(Teal.copy(alpha = if (pc == tonic) 1f else 0.5f), radius = (if (pc == tonic) 4.5f else 3f) * dp, center = Offset(k.left + k.width / 2, k.height - textSizePx * 2.6f))
@@ -553,8 +566,9 @@ private fun Keyboard(
                     drawPath(body, Brush.verticalGradient(0f to EbonyTop, 0.12f to Ebony, 1f to Color(0xFF0E0D0C)))
                     // Gloss along the top edge, dimmer when pressed.
                     drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = (0.35f * (1f - 0.6f * d)).coerceIn(0f, 1f)), 1f to Color.Transparent, startY = 0f, endY = h * 0.14f), Offset(k.left + dp, 0f), Size(k.width - 2f * dp, h * 0.14f))
-                    if (down || lit || d > 0f) {
-                        val strength = if (down) 1f else if (lit) 0.6f else d
+                    val sounding = if (k.midi in levels.indices) levels[k.midi] else 0f
+                    val strength = maxOf(if (down) 1f else 0f, if (lit) 0.6f else 0f, sounding * 0.85f)
+                    if (strength > 0.02f) {
                         drawPath(body, Brush.verticalGradient(0f to Color.Transparent, 0.5f to Color.Transparent, 1f to Teal.copy(alpha = 0.75f * strength), startY = 0f, endY = h))
                     }
                     if (inScale != null && pc in inScale) drawCircle(Teal.copy(alpha = if (pc == tonic) 1f else 0.6f), radius = (if (pc == tonic) 4f else 2.5f) * dp, center = Offset(k.left + k.width / 2, h - 8f * dp))

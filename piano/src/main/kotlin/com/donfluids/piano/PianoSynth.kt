@@ -14,7 +14,14 @@ import kotlin.math.tanh
  * Thread safety: [noteOn], [noteOff] and [sustain] may be called from any thread; [render]
  * is meant for one audio thread. Voice state is guarded by a lock held only briefly.
  */
-class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
+class PianoSynth(
+    val sampleRate: Int,
+    private val maxVoices: Int = 32,
+    /** Longest a lifted key may ring under sustain on a decaying tone, in seconds. */
+    private val sustainCapSeconds: Double = 10.0,
+    /** Time constant of the slow fade an organ key gets when lifted under sustain. */
+    private val organSustainFadeSeconds: Double = 1.5,
+) {
 
     /** The instrument every new note uses. */
     @Volatile var tone: Tone = Tone.PIANO
@@ -34,18 +41,28 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
         var releasing = false
         var releaseFactor = 1.0
         var held = false
+        var decays = true
         var startedAt = 0L
+        var liftedSamples = 0L
+        /** Current loudness relative to the note's start, for the display. */
+        var peakAmp = 1.0
+        /** A note waiting to start on this voice once its old sound has faded. */
+        var pending: Pending? = null
+        var stealFadeSamples = 0
     }
+
+    private class Pending(val midi: Int, val velocity: Double, val tone: Tone)
 
     private val voices = Array(maxVoices) { Voice() }
     private val lock = Any()
     private var sequence = 0L
+    private val stealFadeLength = (sampleRate * 0.004).toInt()
 
-    /** While true, lifted keys keep ringing until sustain is released. */
+    /** While true, lifted keys keep ringing (bounded by the sustain cap) until sustain is released. */
     @Volatile var sustain: Boolean = false
         set(value) {
             field = value
-            if (!value) synchronized(lock) { for (v in voices) if (v.active && !v.held) release(v) }
+            if (!value) synchronized(lock) { for (v in voices) if (v.active && !v.held && !v.releasing) release(v) }
         }
 
     /** Number of voices currently sounding. */
@@ -54,38 +71,61 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
     fun noteOn(midi: Int, velocity: Float = 1f) {
         val vel = velocity.coerceIn(0.05f, 1f).toDouble()
         synchronized(lock) {
-            // Retrigger a held note on the same voice; otherwise take a free voice, or the oldest.
-            val same = voices.firstOrNull { it.active && it.midi == midi }
-            val v = same ?: voices.firstOrNull { !it.active } ?: voices.minByOrNull { it.startedAt }!!
-            val freq = 440.0 * 2.0.pow((midi - 69) / 12.0)
-            val t = tone
-            v.midi = midi
-            v.active = true
-            v.held = true
-            v.releasing = false
-            // Retriggering a ringing key keeps its phase and current level, so there is no click;
-            // a stolen or free voice starts from silence.
-            if (same == null) { v.phase = 0.0; v.envelope = 0.0 }
-            v.phaseStep = 2.0 * PI * freq / sampleRate
-            // Lower notes ring longer; each higher harmonic dies off sooner than the one below.
-            // An organ does not decay at all while the key is held.
-            val baseTau = 3.0 * (220.0 / freq).pow(0.4).coerceIn(0.4, 6.0)
-            for (k in 0 until HARMONICS) {
-                val n = k + 1
-                v.harmonicAmp[k] = t.levels[k] * vel * (if (n * freq > sampleRate / 2.5) 0.0 else 1.0)
-                v.harmonicDecay[k] = if (t.decays) exp(-1.0 / (sampleRate * baseTau / (1.0 + 0.7 * k))) else 1.0
+            val same = voices.firstOrNull { it.active && it.midi == midi && it.pending == null }
+            if (same != null) {
+                // Retriggering a ringing key keeps its phase and current level, so there is no click.
+                start(same, midi, vel, tone, fresh = false)
+                return
             }
-            v.attackStep = 1.0 / (sampleRate * t.attackSeconds)
-            v.releaseFactor = exp(-1.0 / (sampleRate * t.releaseSeconds))
-            v.startedAt = sequence++
+            val free = voices.firstOrNull { !it.active }
+            if (free != null) { start(free, midi, vel, tone, fresh = true); return }
+            // Steal the quietest voice that is already on its way out, else the quietest of all,
+            // and let it fade for a few milliseconds before the new note starts on it.
+            val victim = voices.filter { it.releasing }.minByOrNull { level(it) } ?: voices.minByOrNull { level(it) }!!
+            victim.pending = Pending(midi, vel, tone)
+            victim.stealFadeSamples = stealFadeLength
+            victim.held = true // the new note is held from now, even while the old one fades
         }
+    }
+
+    private fun level(v: Voice): Double = v.envelope * v.harmonicAmp[0]
+
+    private fun start(v: Voice, midi: Int, vel: Double, t: Tone, fresh: Boolean) {
+        val freq = 440.0 * 2.0.pow((midi - 69) / 12.0)
+        v.midi = midi
+        v.active = true
+        v.held = true
+        v.releasing = false
+        v.decays = t.decays
+        v.liftedSamples = 0
+        v.pending = null
+        v.stealFadeSamples = 0
+        if (fresh) { v.phase = 0.0; v.envelope = 0.0 }
+        v.phaseStep = 2.0 * PI * freq / sampleRate
+        // Lower notes ring longer; each higher harmonic dies off sooner than the one below.
+        // An organ does not decay at all while the key is held.
+        val baseTau = 3.0 * (220.0 / freq).pow(0.4).coerceIn(0.4, 6.0)
+        for (k in 0 until HARMONICS) {
+            val n = k + 1
+            v.harmonicAmp[k] = t.levels[k] * vel * (if (n * freq > sampleRate / 2.5) 0.0 else 1.0)
+            v.harmonicDecay[k] = if (t.decays) exp(-1.0 / (sampleRate * baseTau / (1.0 + 0.7 * k))) else 1.0
+        }
+        v.peakAmp = v.harmonicAmp[0].coerceAtLeast(1e-6)
+        v.attackStep = 1.0 / (sampleRate * t.attackSeconds)
+        v.releaseFactor = exp(-1.0 / (sampleRate * t.releaseSeconds))
+        v.startedAt = sequence++
     }
 
     fun noteOff(midi: Int) {
         synchronized(lock) {
-            for (v in voices) if (v.active && v.midi == midi && v.held) {
+            for (v in voices) if (v.active && v.midi == midi && v.held && v.pending == null) {
                 v.held = false
-                if (!sustain) release(v)
+                when {
+                    !sustain -> release(v)
+                    // An organ has no sustain pedal; under sustain a lifted organ key fades slowly.
+                    !v.decays -> { v.releasing = true; v.releaseFactor = exp(-1.0 / (sampleRate * organSustainFadeSeconds)) }
+                    else -> v.liftedSamples = 0
+                }
             }
         }
     }
@@ -96,15 +136,44 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
         synchronized(lock) { for (v in voices) { v.held = false; if (v.active) release(v) } }
     }
 
+    /**
+     * Writes the loudness of each sounding note (0..1, relative to how it started) into [out],
+     * indexed by MIDI note, for the display. Silent notes are 0.
+     */
+    fun copyLevels(out: FloatArray) {
+        java.util.Arrays.fill(out, 0f)
+        synchronized(lock) {
+            for (v in voices) {
+                if (!v.active || v.midi !in out.indices) continue
+                val l = (level(v) / v.peakAmp).coerceIn(0.0, 1.0).toFloat()
+                if (l > out[v.midi]) out[v.midi] = l
+            }
+        }
+    }
+
     /** Renders [frames] mono samples into [out], replacing its contents. */
     fun render(out: FloatArray, frames: Int) {
         java.util.Arrays.fill(out, 0, frames, 0f)
+        val sustainCapSamples = (sustainCapSeconds * sampleRate).toLong()
         synchronized(lock) {
             for (v in voices) {
                 if (!v.active) continue
                 for (i in 0 until frames) {
-                    if (v.envelope < 1.0 && !v.releasing) v.envelope = minOf(1.0, v.envelope + v.attackStep)
-                    else if (v.releasing) v.envelope *= v.releaseFactor
+                    // A stolen voice fades out, then the waiting note starts on it from silence.
+                    if (v.pending != null) {
+                        if (v.stealFadeSamples > 0) {
+                            v.envelope *= 1.0 - 1.0 / v.stealFadeSamples
+                            v.stealFadeSamples--
+                        } else {
+                            val p = v.pending!!
+                            start(v, p.midi, p.velocity, p.tone, fresh = true)
+                        }
+                    } else if (v.envelope < 1.0 && !v.releasing) {
+                        v.envelope = minOf(1.0, v.envelope + v.attackStep)
+                    } else if (v.releasing) {
+                        v.envelope *= v.releaseFactor
+                    }
+                    if (!v.held && !v.releasing && v.decays && ++v.liftedSamples > sustainCapSamples) release(v)
                     var sample = 0.0
                     for (k in 0 until HARMONICS) {
                         val a = v.harmonicAmp[k]
@@ -116,7 +185,7 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
                     if (v.phase >= 2.0 * PI) v.phase -= 2.0 * PI
                     out[i] += (sample * v.envelope).toFloat()
                 }
-                if ((v.releasing && v.envelope < 2e-3) || v.harmonicAmp[0] < 1e-4) v.active = false
+                if (v.pending == null && ((v.releasing && v.envelope < 2e-3) || v.harmonicAmp[0] < 1e-4)) v.active = false
             }
         }
         // Gentle limiter so many keys at once do not clip harshly.
