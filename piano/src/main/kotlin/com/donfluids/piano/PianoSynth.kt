@@ -55,16 +55,17 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
         val vel = velocity.coerceIn(0.05f, 1f).toDouble()
         synchronized(lock) {
             // Retrigger a held note on the same voice; otherwise take a free voice, or the oldest.
-            val v = voices.firstOrNull { it.active && it.midi == midi }
-                ?: voices.firstOrNull { !it.active }
-                ?: voices.minByOrNull { it.startedAt }!!
+            val same = voices.firstOrNull { it.active && it.midi == midi }
+            val v = same ?: voices.firstOrNull { !it.active } ?: voices.minByOrNull { it.startedAt }!!
             val freq = 440.0 * 2.0.pow((midi - 69) / 12.0)
             val t = tone
             v.midi = midi
             v.active = true
             v.held = true
             v.releasing = false
-            v.phase = 0.0
+            // Retriggering a ringing key keeps its phase and current level, so there is no click;
+            // a stolen or free voice starts from silence.
+            if (same == null) { v.phase = 0.0; v.envelope = 0.0 }
             v.phaseStep = 2.0 * PI * freq / sampleRate
             // Lower notes ring longer; each higher harmonic dies off sooner than the one below.
             // An organ does not decay at all while the key is held.
@@ -74,7 +75,6 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
                 v.harmonicAmp[k] = t.levels[k] * vel * (if (n * freq > sampleRate / 2.5) 0.0 else 1.0)
                 v.harmonicDecay[k] = if (t.decays) exp(-1.0 / (sampleRate * baseTau / (1.0 + 0.7 * k))) else 1.0
             }
-            v.envelope = 0.0
             v.attackStep = 1.0 / (sampleRate * t.attackSeconds)
             v.releaseFactor = exp(-1.0 / (sampleRate * t.releaseSeconds))
             v.startedAt = sequence++
@@ -133,7 +133,9 @@ class PianoSynth(val sampleRate: Int, private val maxVoices: Int = 16) {
 
     companion object {
         const val HARMONICS = 6
-        private const val MASTER = 0.35f
+        // Chosen so a four-note chord at full velocity stays in the limiter's linear region and
+        // ten notes saturate gently rather than hard.
+        private const val MASTER = 0.15f
 
         private const val TABLE_SIZE = 4096
         private val SINE = FloatArray(TABLE_SIZE + 1) { sin(2.0 * PI * it / TABLE_SIZE).toFloat() }
