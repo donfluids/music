@@ -199,6 +199,20 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         tapCount = tapEntry.count
         if (e != null) applyMatch(SongMatcher.matchTapped(heard, e.bpm, tapBeats), e.downbeatNanos)
     }
+    // Count the band in by hand: one bar of taps in the chosen style sets the tempo, and the
+    // band enters on the next downbeat with its current chord (or the key's tonic).
+    fun tapBandIn() {
+        tapEntry.beatsNeeded = if (bandStyle.beatsPerBar == 3) 3 else 4
+        val e = tapEntry.tap(System.nanoTime()) ?: run { tapCount = tapEntry.count; return }
+        tapCount = 0
+        bpm = e.bpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
+        val chord = bandChord ?: scale?.let { BandChord(it.tonic, if (it.minor) BandChord.Quality.MINOR else BandChord.Quality.MAJOR) }
+        chord?.let { bandChord = it; output()?.band?.setChord(it) }
+        output()?.band?.startAt(e.downbeatNanos)
+        output()?.metronome?.enabled = false
+        bandPlaying = true
+        if (listening) { entering = true; matchedStyle = bandStyle }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else micMessage = micDenied
     }
@@ -343,6 +357,12 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         // Chord row sits directly above the keys so the eye drops from chord to notes.
         if (bandOn || scale != null) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (bandOn && !bandPlaying) {
+                    // Count the band in by hand, in the player's own time.
+                    Button(onClick = { tapBandIn() }, modifier = Modifier.height(36.dp)) {
+                        Text(stringResource(R.string.tap_in, tapCount, if (bandStyle.beatsPerBar == 3) 3 else 4))
+                    }
+                }
                 if (bandOn) {
                     // The chord the band is playing, large enough to read from the keys.
                     Text(
