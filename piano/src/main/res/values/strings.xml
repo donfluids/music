@@ -29,6 +29,12 @@
     <string name="switch_margin_eager">eager</string>
     <string name="switch_margin_steady">steady</string>
     <string name="fills">Drum fill on chord changes</string>
+    <string name="wait_for_key">Band waits for the key to settle</string>
+    <string name="settle_time">Settle time</string>
+    <string name="zoning_in">Zoning in on</string>
+    <string name="key_settled">settled</string>
+    <string name="key_locked">locked</string>
+    <string name="tap_to_lock">tap a key to lock it</string>
     <string name="auto_start">Band starts by itself on the next downbeat</string>
     <string name="listen_starting">%1$s · entering on the downbeat</string>
     <string name="tap_hint">%1$s heard, no steady beat. Tap the beat to bring the band in.</string>

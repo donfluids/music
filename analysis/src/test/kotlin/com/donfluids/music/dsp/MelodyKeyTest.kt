@@ -103,10 +103,13 @@ class MelodyKeyTest {
             val n = minOf(1024, audio.size - i)
             analyzer.process(audio.copyOfRange(i, i + n), n, ((i + n).toDouble() / rate * 1e9).toLong())
             val k = analyzer.result.key?.label
-            if (k != null && (seen.isEmpty() || seen.last() != k)) seen += k
+            if (k != null && (seen.isEmpty() || seen.last() != k)) { seen += k; println("t=${"%.2f".format((i + n).toDouble() / rate)} key=$k held=${analyzer.result.keyHeldSeconds} melody=${analyzer.result.keyFromMelody}") }
             i += n
         }
-        assertTrue("shown keys: $seen", seen.size <= 3)
+        assertTrue("shown keys: $seen", seen.size <= 2)
         assertEquals("E major", seen.last())
+        val r = analyzer.result
+        assertTrue("held ${r.keyHeldSeconds} s", r.keyHeldSeconds > 0.5f)
+        assertTrue("score ${r.keyScore}", r.keyScore > 0.3f)
     }
 }

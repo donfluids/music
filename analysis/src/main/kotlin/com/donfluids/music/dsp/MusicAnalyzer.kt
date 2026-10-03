@@ -18,6 +18,10 @@ data class AnalysisResult(
     val recentChroma: List<Float> = List(12) { 0f },
     val key: Key? = null,
     val keyConfidence: Float = 0f,
+    /** How long [key] has been the shown key without changing. */
+    val keyHeldSeconds: Float = 0f,
+    /** The shown key's own fit (correlation with its profile), for comparing against [keyAlternatives]. */
+    val keyScore: Float = 0f,
     /** The next best guesses, best first. */
     val keyAlternatives: List<Pair<Key, Float>> = emptyList(),
     /** Cents sharp (+) or flat (-) of A4 = 440 Hz. */
@@ -178,6 +182,8 @@ class MusicAnalyzer(
         tempo = null
         pendingKey = null
         pendingKeyConfidence = 0f
+        pendingKeyScore = 0f
+        shownKeySince = 0.0
         pendingAlternatives = emptyList()
         shownMeterIndex = 0
         shownAnchorShift = 0.0
@@ -270,6 +276,8 @@ class MusicAnalyzer(
 
     private var pendingKey: Key? = null
     private var pendingKeyConfidence = 0f
+    private var pendingKeyScore = 0f
+    private var shownKeySince = 0.0
     private var pendingAlternatives: List<Pair<Key, Float>> = emptyList()
 
     /** Tracks the sung pitch on the singer's own grid and segments it into notes. */
@@ -284,6 +292,12 @@ class MusicAnalyzer(
     }
 
     private fun updateKey() {
+        val before = pendingKey
+        updateKeyInner()
+        if (pendingKey != before) shownKeySince = hopIndex * hopSeconds
+    }
+
+    private fun updateKeyInner() {
         // A lone melody: once enough notes are in, the melodic finder decides and chroma only
         // breaks ties. Its evidence (phrase endings, the longest note) is what a listener uses.
         if (pitchTracker != null) {
@@ -303,6 +317,7 @@ class MusicAnalyzer(
                 val shown = shownKey ?: best.key
                 pendingKey = shown
                 pendingKeyConfidence = if (shown == best.key) confidence else confidence * 0.5f
+                pendingKeyScore = (melodic.firstOrNull { it.key == shown }?.score ?: 0.0).toFloat().coerceIn(0f, 1f)
                 pendingAlternatives = melodic.filter { it.key != shown }.take(3).map { it.key to it.score.toFloat().coerceIn(0f, 1f) }
                 return
             }
@@ -310,7 +325,8 @@ class MusicAnalyzer(
         val ranked = KeyDetector.rank(chromaExtractor.accumulatedChroma)
         val confidence = KeyDetector.confidence(ranked).toFloat()
         val best = ranked.first().key
-        val enoughSound = chromaExtractor.accumulatedWeight > 1e-4
+        // Nothing is shown from the first moments: a single slide or breath is not a key.
+        val enoughSound = chromaExtractor.accumulatedWeight > 1e-4 && hopIndex * hopSeconds >= 1.0
         if (!enoughSound || confidence < 0.15f) {
             keyCandidateHits = 0
             return
@@ -323,6 +339,7 @@ class MusicAnalyzer(
         pendingKey = shown
         pendingKeyConfidence = if (shown == best) confidence
         else ranked.first { it.key == shown }.correlation.toFloat().coerceIn(0f, 1f) * 0.5f
+        pendingKeyScore = ranked.first { it.key == shown }.correlation.toFloat().coerceIn(0f, 1f)
         pendingAlternatives = ranked.filter { it.key != shown }.take(3)
             .map { it.key to it.correlation.toFloat().coerceIn(0f, 1f) }
     }
@@ -505,6 +522,8 @@ class MusicAnalyzer(
             recentChroma = recentChroma.toList(),
             key = pendingKey,
             keyConfidence = pendingKeyConfidence,
+            keyHeldSeconds = if (pendingKey != null) (hopIndex * hopSeconds - shownKeySince).toFloat() else 0f,
+            keyScore = pendingKeyScore,
             keyAlternatives = pendingAlternatives,
             tuningCents = chromaExtractor.tuningOffsetCents().toFloat(),
             tuningConfidence = chromaExtractor.tuningConfidence().toFloat(),

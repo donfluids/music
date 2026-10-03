@@ -32,6 +32,10 @@ object SongMatcher {
 
     data class Match(val style: Style, val bpm: Int, val scale: Theory.Scale?, val chord: BandChord?, val reason: String)
 
+    /** The heard key has stopped moving: shown unchanged for [settleSeconds] with some confidence. */
+    fun keySettled(a: AnalysisResult, settleSeconds: Int): Boolean =
+        (a.displayKey ?: a.key) != null && a.keyHeldSeconds >= settleSeconds && a.keyConfidence >= 0.25f
+
     /**
      * A sung song with no steady pulse: the key is in but the tempo never locks. After
      * [afterSeconds] of that, the player taps the beat instead of waiting.

@@ -43,6 +43,13 @@ class Settings(context: Context) {
     var bandVolume: Float
         get() = prefs.getFloat("bandVolume", 0.8f)
         set(v) = prefs.edit().putFloat("bandVolume", v).apply()
+    /** The band does not enter by itself until the heard key has held still for [keySettleSeconds]. */
+    var waitForKey: Boolean
+        get() = prefs.getBoolean("waitForKey", true)
+        set(v) = prefs.edit().putBoolean("waitForKey", v).apply()
+    var keySettleSeconds: Int
+        get() = prefs.getInt("keySettleSeconds", 6)
+        set(v) = prefs.edit().putInt("keySettleSeconds", v).apply()
     var autoStart: Boolean
         get() = prefs.getBoolean("autoStart", true)
         set(v) = prefs.edit().putBoolean("autoStart", v).apply()

@@ -107,4 +107,14 @@ class SongMatcherTest {
         assertNull(w.tap(0)); assertNull(w.tap(s))
         assertEquals(60, w.tap(2 * s)!!.bpm)
     }
+
+    @Test
+    fun theKeyIsSettledOnceItHasHeldStill() {
+        val e = Key(4, Mode.MAJOR)
+        val heard = AnalysisResult(key = e, displayKey = e, keyConfidence = 0.5f, keyHeldSeconds = 7f)
+        assertEquals(true, SongMatcher.keySettled(heard, 6))
+        assertEquals(false, SongMatcher.keySettled(heard.copy(keyHeldSeconds = 2f), 6))
+        assertEquals(false, SongMatcher.keySettled(heard.copy(keyConfidence = 0.1f), 6))
+        assertEquals(false, SongMatcher.keySettled(AnalysisResult(keyHeldSeconds = 20f), 6))
+    }
 }
