@@ -23,3 +23,4 @@ dependencyResolutionManagement {
 rootProject.name = "LiveKey"
 include(":app")
 include(":piano")
+include(":analysis")
