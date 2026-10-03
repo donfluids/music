@@ -131,6 +131,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var followChords by remember { mutableStateOf(settings.followChords) }
     var autoStart by remember { mutableStateOf(settings.autoStart) }
     var entering by remember { mutableStateOf(false) }
+    var lastHarmonizedAt by remember { mutableStateOf(-1L) }
     var matchedStyle by remember { mutableStateOf<Style?>(null) }
     val heard by listener.result.collectAsStateWithLifecycle()
     val micError by listener.error.collectAsStateWithLifecycle()
@@ -154,6 +155,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         bandPlaying = on
         output()?.band?.playing = on
         output()?.metronome?.enabled = metronomeOn && !on
+        if (listening) listener.setBandPlaying(on)
     }
 
     val view = LocalView.current
@@ -167,6 +169,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         listener.start(withBand = bandPlaying)
         listening = listener.running
         matchedStyle = null
+        lastHarmonizedAt = -1L
     }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else micMessage = micDenied
@@ -197,14 +200,23 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 bandPlaying = true
             }
         }
-        if (entering && output()?.band?.startAtNanos == 0L) entering = false
-        if (followChords && bandOn && bandPlaying) {
-            // The band follows the chord the analyser hears, by its underlying triad, but only
-            // chords that belong to the key; a stray reading is ignored.
-            heard.currentChord?.let { c ->
-                val q = if (c.minor) BandChord.Quality.MINOR else BandChord.Quality.MAJOR
-                val next = BandChord(c.root, q)
-                if (next != bandChord && SongMatcher.followable(next, scale)) { bandChord = next; output()?.band?.setChord(next) }
+        if (entering && output()?.band?.startAtNanos == 0L) {
+            entering = false
+            // The band is now on the speaker: reopen the microphone with echo cancellation.
+            listener.setBandPlaying(true)
+        }
+        if (followChords && bandOn && bandPlaying && !entering) {
+            // Harmonise the melody once per half bar, on the band's own clock, so chord changes
+            // land on the beat rather than mid-phrase.
+            val band = output()?.band
+            val sc = scale
+            if (band != null && sc != null) {
+                val halfBar = band.barCount * 2 + (if (band.beatIndex * 2 >= bandStyle.beatsPerBar) 1 else 0)
+                if (halfBar != lastHarmonizedAt) {
+                    lastHarmonizedAt = halfBar
+                    val next = MelodyHarmonizer(sc).next(heard.recentChroma, bandChord)
+                    if (next != bandChord) { bandChord = next; band.setChord(next) }
+                }
             }
         }
     }

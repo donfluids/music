@@ -14,6 +14,8 @@ data class AnalysisResult(
     val level: Float = 0f,
     /** Per-pitch-class energy of recent audio, normalised so the loudest bin is 1. */
     val chroma: List<Float> = List(12) { 0f },
+    /** The same over only the last half second or so, unnormalised: what is being sung right now. */
+    val recentChroma: List<Float> = List(12) { 0f },
     val key: Key? = null,
     val keyConfidence: Float = 0f,
     /** The next best guesses, best first. */
@@ -145,6 +147,8 @@ class MusicAnalyzer(
 
     private var levelRms = 0.0
     private var levelSamples = 0
+    private val recentChroma = FloatArray(12)
+    private val recentChromaSeconds = 0.5
 
     @Volatile
     var result: AnalysisResult = AnalysisResult()
@@ -177,6 +181,7 @@ class MusicAnalyzer(
         openEnd = 0f
         levelRms = 0.0
         levelSamples = 0
+        recentChroma.fill(0f)
         chordTracker.reset()
         segments.clear()
         openChord = null
@@ -236,6 +241,10 @@ class MusicAnalyzer(
         var changed = false
         if (hopIndex % chromaEveryHops == 0L) {
             chromaExtractor.process(window, windowSize, hopSeconds * chromaEveryHops)
+            run {
+                val decay = kotlin.math.exp(-(hopSeconds * chromaEveryHops) / recentChromaSeconds).toFloat()
+                for (i in 0 until 12) recentChroma[i] = recentChroma[i] * decay + chromaExtractor.frameChroma[i]
+            }
             updateKey()
             updateChords()
             changed = true
@@ -449,6 +458,7 @@ class MusicAnalyzer(
             secondsHeard = (hopIndex * hopSeconds).toFloat(),
             level = level,
             chroma = chroma.map { it / maxChroma },
+            recentChroma = recentChroma.toList(),
             key = pendingKey,
             keyConfidence = pendingKeyConfidence,
             keyAlternatives = pendingAlternatives,

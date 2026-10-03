@@ -18,8 +18,14 @@ class SongListener(private val context: Context) {
     @Volatile private var analyzer: MusicAnalyzer? = null
     private var capture: AudioCapture? = null
     val running: Boolean get() = capture != null
+    /** True while the microphone path is cancelling the phone's own playback. */
+    val echoCancelling: Boolean get() = capture?.echoCancelling == true
+    private var cancelling = false
 
-    /** [withBand] picks the preset: a band on the speaker gives drums to lock to; voices alone do not. */
+    /**
+     * [withBand]: the band is playing through the speaker, so open the microphone with echo
+     * cancellation so the analyser hears the singers rather than the band.
+     */
     fun start(withBand: Boolean) {
         if (capture != null) return
         _error.value = null
@@ -27,11 +33,20 @@ class SongListener(private val context: Context) {
             context,
             listener = { samples, count, now -> analyzer?.let { if (it.process(samples, count, now)) _result.value = it.result } },
             onError = { message -> _error.value = message; capture = null },
+            echoCancel = withBand,
         )
         try { cap.start() } catch (e: Exception) { _error.value = e.message ?: "Could not open the microphone"; return }
-        analyzer = MusicAnalyzer(cap.sampleRate, if (withBand) AnalysisPreset.BAND else AnalysisPreset.VOICES)
+        analyzer = MusicAnalyzer(cap.sampleRate, AnalysisPreset.VOICES)
         capture = cap
+        cancelling = withBand
         _result.value = AnalysisResult()
+    }
+
+    /** Reopens the microphone with or without echo cancellation; the analysis starts afresh. */
+    fun setBandPlaying(playing: Boolean) {
+        if (capture == null || playing == cancelling) return
+        stop()
+        start(withBand = playing)
     }
 
     fun stop() {

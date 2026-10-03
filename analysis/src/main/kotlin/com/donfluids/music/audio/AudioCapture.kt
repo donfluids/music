@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.os.Process
 
 /**
@@ -19,9 +20,20 @@ class AudioCapture(
     private val context: Context,
     private val listener: (samples: FloatArray, count: Int, nowNanos: Long) -> Unit,
     private val onError: (message: String) -> Unit,
+    /**
+     * Use the voice-communication source with the platform's acoustic echo canceller, so the
+     * phone's own playback is subtracted from what the microphone hears. Costs some fidelity
+     * (that source often applies gain control), so only ask for it while something is playing.
+     */
+    private val echoCancel: Boolean = false,
 ) {
     var sampleRate: Int = 0
         private set
+
+    /** True when an echo canceller was attached and enabled. */
+    var echoCancelling: Boolean = false
+        private set
+    private var canceller: AcousticEchoCanceler? = null
 
     private var thread: Thread? = null
     @Volatile private var running = false
@@ -30,7 +42,7 @@ class AudioCapture(
     @SuppressLint("MissingPermission") // The caller checks RECORD_AUDIO before calling.
     fun start() {
         if (running) return
-        val source = pickSource()
+        val source = if (echoCancel) MediaRecorder.AudioSource.VOICE_COMMUNICATION else pickSource()
         var opened: AudioRecord? = null
         var rate = 0
         for (candidate in intArrayOf(44100, 48000, 22050, 16000)) {
@@ -51,6 +63,10 @@ class AudioCapture(
         }
         val r = opened ?: throw IllegalStateException("Could not open the microphone")
         sampleRate = rate
+        if (echoCancel && AcousticEchoCanceler.isAvailable()) {
+            canceller = runCatching { AcousticEchoCanceler.create(r.audioSessionId)?.also { it.enabled = true } }.getOrNull()
+            echoCancelling = canceller?.enabled == true
+        }
         running = true
         thread = Thread({ loop(r) }, "LiveKey-audio").also { it.start() }
     }
@@ -92,6 +108,8 @@ class AudioCapture(
             }
         } finally {
             runCatching { r.stop() }
+            runCatching { canceller?.release() }
+            canceller = null
             r.release()
         }
     }
