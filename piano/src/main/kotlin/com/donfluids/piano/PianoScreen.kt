@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -109,17 +110,39 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var scaleDialog by remember { mutableStateOf(false) }
     var tempoDialog by remember { mutableStateOf(false) }
     var settingsSheet by remember { mutableStateOf(false) }
+    var bandDialog by remember { mutableStateOf(false) }
+    var bandOn by remember { mutableStateOf(settings.bandOn) }
+    var bandStyle by remember { mutableStateOf(settings.bandStyle) }
+    var bandPlaying by remember { mutableStateOf(false) }
+    var bandVolume by remember { mutableStateOf(settings.bandVolume) }
+    var bandChord by remember { mutableStateOf<BandChord?>(null) }
+    val splitMidi = 60
     val visibleWhite = 14
     val synth: () -> PianoSynth? = { output()?.synth }
     val chordHeld = remember { mutableStateMapOf<Int, List<Int>>() }
     // The audio engine is recreated whenever the activity returns to the front; keep it in step.
     val engine = output()
-    LaunchedEffect(engine) { engine?.metronome?.enabled = metronomeOn }
+    LaunchedEffect(engine) {
+        engine?.metronome?.enabled = metronomeOn && !bandPlaying
+        engine?.band?.let { it.style = bandStyle; it.bpm = bpm; it.volume = bandVolume; it.playing = bandPlaying; bandChord?.let { c -> it.setChord(c) } }
+    }
+    fun setBandChord(c: BandChord?) {
+        if (c == null) return
+        bandChord = c
+        output()?.band?.setChord(c)
+        // Sync start: the first chord starts the band if it is on but idle.
+        if (bandOn && !bandPlaying) { bandPlaying = true; output()?.band?.playing = true; output()?.metronome?.enabled = false }
+    }
+    fun setBandPlaying(on: Boolean) {
+        bandPlaying = on
+        output()?.band?.playing = on
+        output()?.metronome?.enabled = metronomeOn && !on
+    }
 
     val view = LocalView.current
     DisposableEffect(Unit) {
         view.keepScreenOn = true
-        onDispose { view.keepScreenOn = false; output()?.metronome?.enabled = false }
+        onDispose { view.keepScreenOn = false; output()?.metronome?.enabled = false; output()?.band?.playing = false }
     }
 
     Column(
@@ -158,13 +181,24 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 label = { Text(scale?.label ?: stringResource(R.string.scale)) },
                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer, selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer),
             )
+            FilterChip(
+                selected = bandOn,
+                onClick = { bandDialog = true },
+                label = { Text(if (bandOn) bandStyle.name else stringResource(R.string.band)) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer, selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer),
+            )
             MetronomePill(
-                on = metronomeOn, bpm = bpm, beatsPerBar = beatsPerBar, output = output,
-                onToggle = { metronomeOn = !metronomeOn; output()?.metronome?.enabled = metronomeOn },
+                on = if (bandOn) bandPlaying else metronomeOn, bpm = bpm,
+                signature = if (bandOn) bandStyle.label else if (beatsPerBar == 6) "6/8" else "$beatsPerBar/4",
+                clock = { if (bandOn) output()?.band?.let { b -> b.beatIndex to b.beatAtNanos } else output()?.metronome?.let { m -> m.beatIndex to m.beatAtNanos } },
+                isBand = bandOn,
+                onToggle = { if (bandOn) setBandPlaying(!bandPlaying) else { metronomeOn = !metronomeOn; output()?.metronome?.enabled = metronomeOn } },
                 onTempoTap = { tempoDialog = true },
                 onCycleBeats = {
-                    beatsPerBar = when (beatsPerBar) { 2 -> 3; 3 -> 4; 4 -> 6; else -> 2 }
-                    settings.beatsPerBar = beatsPerBar; output()?.metronome?.beatsPerBar = beatsPerBar
+                    if (!bandOn) {
+                        beatsPerBar = when (beatsPerBar) { 2 -> 3; 3 -> 4; 4 -> 6; else -> 2 }
+                        settings.beatsPerBar = beatsPerBar; output()?.metronome?.beatsPerBar = beatsPerBar
+                    }
                 },
             )
             IconButton(onClick = { settingsSheet = true }) {
@@ -174,18 +208,33 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         if (error != null) Text(error, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
 
         // Chord row sits directly above the keys so the eye drops from chord to notes.
-        scale?.let { sc ->
-            // Chords are voiced from the lowest C in view.
-            val octaveC = KeyboardLayout.FIRST_MIDI + 12 * (Math.round(scroll.value) / 7)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                sc.chords().forEachIndexed { i, chord ->
-                    val rootMidi = octaveC + chord.pitchClasses[0] + (if (chord.pitchClasses[0] < sc.tonic) 12 else 0)
-                    val notes = chord.pitchClasses.map { pc -> rootMidi + Math.floorMod(pc - chord.pitchClasses[0], 12) }
-                    ChordButton(
-                        chord, held = chordHeld.containsKey(i),
-                        onPress = { chordHeld[i] = chord.pitchClasses; notes.forEach { synth()?.noteOn(it, 0.8f) } },
-                        onRelease = { chordHeld.remove(i); notes.forEach { synth()?.noteOff(it) } },
+        if (bandOn || scale != null) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (bandOn) {
+                    // The chord the band is playing, large enough to read from the keys.
+                    Text(
+                        bandChord?.name(flats = scale?.let { it.spell(1).endsWith("b") } ?: false) ?: "–",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (bandPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(96.dp),
                     )
+                }
+                scale?.let { sc ->
+                    // Chords are voiced from the lowest C in view.
+                    val octaveC = KeyboardLayout.FIRST_MIDI + 12 * (Math.round(scroll.value) / 7)
+                    sc.chords().forEachIndexed { i, chord ->
+                        val rootMidi = octaveC + chord.pitchClasses[0] + (if (chord.pitchClasses[0] < sc.tonic) 12 else 0)
+                        val notes = chord.pitchClasses.map { pc -> rootMidi + Math.floorMod(pc - chord.pitchClasses[0], 12) }
+                        ChordButton(
+                            chord, held = chordHeld.containsKey(i),
+                            onPress = {
+                                chordHeld[i] = chord.pitchClasses
+                                if (bandOn) setBandChord(BandChord.recognise(notes)) else notes.forEach { synth()?.noteOn(it, 0.8f) }
+                            },
+                            onRelease = { chordHeld.remove(i); if (!bandOn) notes.forEach { synth()?.noteOff(it) } },
+                        )
+                    }
                 }
             }
         }
@@ -194,12 +243,27 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             litPitchClasses = chordHeld.values.flatten().toSet(),
             synth = synth, haptics = haptics,
             onScrollSettled = { settings.scroll = it },
+            chordZoneBelow = if (bandOn) splitMidi else null,
+            onChordZone = { held -> setBandChord(BandChord.recognise(held)) },
             modifier = Modifier.fillMaxWidth().weight(1f),
+        )
+    }
+    if (bandDialog) {
+        BandDialog(
+            on = bandOn, style = bandStyle,
+            onPick = { st ->
+                bandOn = true; bandStyle = st; settings.bandOn = true; settings.bandStyle = st
+                output()?.band?.style = st
+                bpm = st.defaultBpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
+                bandDialog = false
+            },
+            onOff = { bandOn = false; settings.bandOn = false; setBandPlaying(false); bandDialog = false },
+            onDismiss = { bandDialog = false },
         )
     }
 
     if (scaleDialog) ScaleDialog(current = scale, onPick = { scale = it; settings.scale = it; scaleDialog = false }, onDismiss = { scaleDialog = false })
-    if (tempoDialog) TempoDialog(bpm = bpm, onBpm = { bpm = it.coerceIn(30, 240); settings.bpm = bpm; output()?.metronome?.bpm = bpm }, onDismiss = { tempoDialog = false })
+    if (tempoDialog) TempoDialog(bpm = bpm, onBpm = { bpm = it.coerceIn(30, 240); settings.bpm = bpm; output()?.metronome?.bpm = bpm; output()?.band?.bpm = bpm }, onDismiss = { tempoDialog = false })
     if (settingsSheet) {
         ModalBottomSheet(onDismissRequest = { settingsSheet = false }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -210,6 +274,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
                 Text(stringResource(R.string.volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
                 Slider(value = volume, onValueChange = { volume = it; synth()?.volume = it }, onValueChangeFinished = { settings.volume = volume })
+                Text(stringResource(R.string.band_volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+                Slider(value = bandVolume, onValueChange = { bandVolume = it; output()?.band?.volume = it }, onValueChangeFinished = { settings.bandVolume = bandVolume })
             }
         }
     }
@@ -280,25 +346,29 @@ private fun OctaveStrip(scroll: Float, visibleWhite: Int, onMove: (Float) -> Uni
     }
 }
 
-/** Dot (tap: start/stop), tempo (tap: dialog) and signature (tap: cycle) in one pill. */
+/** Dot (tap: start/stop), tempo (tap: dialog) and signature (tap: cycle) in one pill. Drives the band when it is on. */
 @Composable
-private fun MetronomePill(on: Boolean, bpm: Int, beatsPerBar: Int, output: () -> AudioOutput?, onToggle: () -> Unit, onTempoTap: () -> Unit, onCycleBeats: () -> Unit) {
+private fun MetronomePill(
+    on: Boolean, bpm: Int, signature: String, clock: () -> Pair<Int, Long>?, isBand: Boolean,
+    onToggle: () -> Unit, onTempoTap: () -> Unit, onCycleBeats: () -> Unit,
+) {
     var frame by remember { mutableLongStateOf(0L) }
     LaunchedEffect(on) { while (on) withFrameNanos { frame = it } }
-    val m = output()?.metronome
+    val (beatIndex, beatAt) = clock() ?: (-1 to 0L)
     val periodNanos = 60e9 / bpm
-    val beatAge = if (on && m != null && m.beatAtNanos > 0) (frame - m.beatAtNanos).toDouble() else -1.0
+    val beatAge = if (on && beatAt > 0) (frame - beatAt).toDouble() else -1.0
     // Breathe between beats so the rhythm is visible, with a brighter hit on the click itself.
     val phase = if (beatAge >= 0) (beatAge / periodNanos).coerceIn(0.0, 1.0) else 0.0
     val breath = if (on) (0.5 + 0.5 * cos(phase * 2 * Math.PI)).toFloat() else 0f
     val hit = if (beatAge in 0.0..3e8) exp(-beatAge / 6e7).toFloat() else 0f
-    val downbeat = m?.beatIndex == 0
+    val downbeat = beatIndex == 0
     val dotColour = when {
         !on -> MaterialTheme.colorScheme.outline
         downbeat -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f + 0.55f * maxOf(breath, hit))
         else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f + 0.55f * maxOf(breath, hit))
     }
-    val toggleDescription = stringResource(R.string.metronome_toggle)
+    val toggleDescription = stringResource(if (isBand) R.string.band_toggle else R.string.metronome_toggle)
+    val primaryColour = MaterialTheme.colorScheme.primary
     Row(
         Modifier
             .clip(RoundedCornerShape(18.dp))
@@ -316,13 +386,24 @@ private fun MetronomePill(on: Boolean, bpm: Int, beatsPerBar: Int, output: () ->
                 .semantics { contentDescription = toggleDescription },
             contentAlignment = Alignment.Center,
         ) {
-            Box(
-                Modifier
-                    .size(16.dp)
-                    .graphicsLayer { val s = 1f + 0.35f * hit; scaleX = s; scaleY = s }
-                    .clip(CircleShape)
-                    .background(dotColour),
-            )
+            if (isBand) {
+                // Play / stop glyph for the band, so it does not look like the metronome.
+                Canvas(Modifier.size(18.dp).graphicsLayer { val s = 1f + 0.25f * hit; scaleX = s; scaleY = s }) {
+                    if (on) drawRoundRect(dotColour, Offset(size.width * 0.2f, size.height * 0.2f), Size(size.width * 0.6f, size.height * 0.6f), CornerRadius(3f, 3f))
+                    else {
+                        val p = Path().apply { moveTo(size.width * 0.25f, size.height * 0.12f); lineTo(size.width * 0.9f, size.height * 0.5f); lineTo(size.width * 0.25f, size.height * 0.88f); close() }
+                        drawPath(p, primaryColour)
+                    }
+                }
+            } else {
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .graphicsLayer { val s = 1f + 0.35f * hit; scaleX = s; scaleY = s }
+                        .clip(CircleShape)
+                        .background(dotColour),
+                )
+            }
         }
         Text(
             "$bpm",
@@ -331,12 +412,39 @@ private fun MetronomePill(on: Boolean, bpm: Int, beatsPerBar: Int, output: () ->
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onTempoTap).minimumInteractiveComponentSize().padding(horizontal = 4.dp),
         )
         Text(
-            if (beatsPerBar == 6) "6/8" else "$beatsPerBar/4",
+            signature,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onCycleBeats).minimumInteractiveComponentSize().padding(horizontal = 4.dp),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !isBand, onClick = onCycleBeats).minimumInteractiveComponentSize().padding(horizontal = 4.dp),
         )
     }
+}
+
+@Composable
+private fun BandDialog(on: Boolean, style: Style, onPick: (Style) -> Unit, onOff: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.band)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stringResource(R.string.band_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Style.ALL.chunked(2).forEach { pair ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        pair.forEach { st ->
+                            FilterChip(
+                                selected = on && st == style,
+                                onClick = { onPick(st) },
+                                label = { Text("${st.name}  ·  ${st.label} ${st.defaultBpm}") },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) } },
+        dismissButton = { TextButton(onClick = onOff) { Text(stringResource(R.string.band_off)) } },
+    )
 }
 
 @Composable
@@ -438,10 +546,14 @@ private fun DrawScope.keyPath(left: Float, top: Float, width: Float, height: Flo
 @Composable
 private fun Keyboard(
     scroll: Animatable<Float, *>, visibleWhite: Int, showNames: Boolean, scale: Theory.Scale?, litPitchClasses: Set<Int>,
-    synth: () -> PianoSynth?, haptics: Boolean, onScrollSettled: (Float) -> Unit, modifier: Modifier,
+    synth: () -> PianoSynth?, haptics: Boolean, onScrollSettled: (Float) -> Unit,
+    /** With the band on, keys below this MIDI note set the chord instead of sounding. */
+    chordZoneBelow: Int?, onChordZone: (Set<Int>) -> Unit,
+    modifier: Modifier,
 ) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val chordHeldKeys = remember { HashSet<Int>() }
     val pressed = remember { mutableStateMapOf<Int, Int>() }
     val pressedAt = remember { mutableStateMapOf<Int, Long>() }
     val releasedAt = remember { mutableStateMapOf<Int, Long>() }
@@ -497,14 +609,15 @@ private fun Keyboard(
             Modifier
                 .fillMaxSize()
                 .semantics { contentDescription = "Piano keyboard, $visibleWhite white keys from ${KeyboardLayout.noteName(layout.leftmostOctaveC(scroll.value))}" }
-                .pointerInput(layout, haptics) {
+                .pointerInput(layout, haptics, chordZoneBelow) {
                     val byPointer = HashMap<PointerId, KeyboardLayout.Key>()
+                    fun inChordZone(midi: Int) = chordZoneBelow != null && midi < chordZoneBelow
                     val downAt = HashMap<PointerId, Offset>()
                     var scrolling = false
                     val slop = layout.whiteWidth * 0.9f
                     fun press(key: KeyboardLayout.Key, y: Float) {
                         val velocity = 0.55f + 0.45f * (y / key.height).coerceIn(0f, 1f)
-                        synth()?.noteOn(key.midi, velocity)
+                        if (inChordZone(key.midi)) { chordHeldKeys += key.midi; onChordZone(chordHeldKeys.toSet()) } else synth()?.noteOn(key.midi, velocity)
                         if (haptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         pressed[key.midi] = (pressed[key.midi] ?: 0) + 1
                         val now = System.nanoTime()
@@ -515,7 +628,11 @@ private fun Keyboard(
                     }
                     fun release(key: KeyboardLayout.Key) {
                         val n = (pressed[key.midi] ?: 1) - 1
-                        if (n <= 0) { pressed.remove(key.midi); synth()?.noteOff(key.midi); val now = System.nanoTime(); releasedAt[key.midi] = now; frame = now } else pressed[key.midi] = n
+                        if (n <= 0) {
+                            pressed.remove(key.midi)
+                            if (inChordZone(key.midi)) chordHeldKeys -= key.midi else synth()?.noteOff(key.midi)
+                            val now = System.nanoTime(); releasedAt[key.midi] = now; frame = now
+                        } else pressed[key.midi] = n
                     }
                     awaitPointerEventScope {
                         while (true) {
@@ -582,6 +699,7 @@ private fun Keyboard(
             val scrollPx = layout.scrollPx(scroll.value)
             translate(-scrollPx, feltPx) {
                 layout.visible(scroll.value, layout.whiteKeys).forEach { k ->
+                    val chordZone = chordZoneBelow != null && k.midi < chordZoneBelow
                     val pc = Math.floorMod(k.midi, 12)
                     val d = depth(k.midi)
                     val down = pressed.containsKey(k.midi)
@@ -590,6 +708,7 @@ private fun Keyboard(
                     val top = d * travelPx
                     val face = keyPath(k.left + 0.6f * dp, top, k.width - 1.2f * dp, k.height - top - 0.5f * dp, radius)
                     val (hi, lo) = when {
+                        chordZone -> Color(0xFFDCE9E6) to Color(0xFFC6D6D2) // the band's chord zone, faintly teal
                         outOfScale -> IvoryDim to IvoryDim.copy(red = IvoryDim.red * 0.9f, green = IvoryDim.green * 0.9f, blue = IvoryDim.blue * 0.9f)
                         else -> Ivory to IvoryShade
                     }
@@ -612,6 +731,11 @@ private fun Keyboard(
                         paint.isFakeBoldText = pc == 0
                         drawContext.canvas.nativeCanvas.drawText(KeyboardLayout.noteName(k.midi), k.left + k.width / 2, k.height - textSizePx * 0.9f + top * 0.5f, paint)
                     }
+                }
+                // Split line between the chord zone and the playing keys.
+                chordZoneBelow?.let { split ->
+                    val x = layout.whiteKeys.firstOrNull { it.midi >= split }?.left ?: return@let
+                    drawLine(Teal, Offset(x, 0f), Offset(x, layout.height), strokeWidth = 2f * dp)
                 }
                 layout.visible(scroll.value, layout.blackKeys).forEach { k ->
                     val pc = Math.floorMod(k.midi, 12)

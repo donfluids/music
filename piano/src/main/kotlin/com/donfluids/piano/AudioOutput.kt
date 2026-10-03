@@ -14,6 +14,7 @@ class AudioOutput(context: Context, private val onError: (String) -> Unit) {
     val synth = PianoSynth(sampleRate)
     val metronome = Metronome(sampleRate)
     val reverb = Reverb(sampleRate)
+    val band = Accompaniment(sampleRate)
 
     private var thread: Thread? = null
     @Volatile private var running = false
@@ -54,9 +55,11 @@ class AudioOutput(context: Context, private val onError: (String) -> Unit) {
             track.play()
             while (running) {
                 synth.render(buffer, block)
-                reverb.process(buffer, block)
                 // The device plays this block roughly one buffer after we hand it over.
-                metronome.mix(buffer, block, System.nanoTime() + (bufferFrames.toDouble() / sampleRate * 1e9).toLong())
+                val at = System.nanoTime() + (bufferFrames.toDouble() / sampleRate * 1e9).toLong()
+                band.mix(buffer, block, at)
+                reverb.process(buffer, block)
+                metronome.mix(buffer, block, at)
                 val written = track.write(buffer, 0, block, AudioTrack.WRITE_BLOCKING)
                 if (written < 0) throw IllegalStateException("Audio write failed ($written)")
             }

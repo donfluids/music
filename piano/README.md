@@ -23,6 +23,13 @@ and installs as its own app (`com.donfluids.piano`).
   visible. Under sustain a lifted piano key rings for at most ten seconds, and a lifted organ
   key fades over a second or two instead of holding forever. Thirty-two voices; when they run
   out, the quietest fading note gives way with a short fade rather than a cut.
+- **Band**: pick a style (Worship Slow, Worship 6/8, 8-Beat Rock, Pop 16-Beat, Gospel Shuffle,
+  Waltz) and the keys below middle C become the chord zone, marked by a teal line. One key
+  gives a major chord; add the black key just below it for minor or the white key just below
+  for a seventh; or play the chord with three or more fingers. The band (synthesised drums,
+  bass and electric piano) starts on the first chord, or from the play button in the pill,
+  and follows the shared tempo. The keys above middle C play as usual over it, and the scale
+  chord buttons set the band's chord too. Band volume is in settings.
 - The gear opens settings: sustain, note names, room (a light reverb), tick (a haptic tap on
   each key) and volume. Everything is remembered between launches.
 - Audio stops when the app leaves the foreground.

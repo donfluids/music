@@ -16,4 +16,9 @@
     <string name="tempo">Tempo</string>
     <string name="tap_tempo">Tap</string>
     <string name="metronome_toggle">Start or stop the metronome</string>
+    <string name="band">Band</string>
+    <string name="band_off">Off</string>
+    <string name="band_volume">Band volume</string>
+    <string name="band_toggle">Start or stop the band</string>
+    <string name="band_hint">Keys below middle C set the chord: one key for major, add the black key below for minor, the white key below for a seventh, or play the chord.</string>
 </resources>

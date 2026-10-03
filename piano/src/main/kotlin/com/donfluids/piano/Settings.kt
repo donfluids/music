@@ -34,6 +34,15 @@ class Settings(context: Context) {
     var haptics: Boolean
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
+    var bandStyle: Style
+        get() = Style.byId(prefs.getString("bandStyle", null))
+        set(v) = prefs.edit().putString("bandStyle", v.id).apply()
+    var bandOn: Boolean
+        get() = prefs.getBoolean("bandOn", false)
+        set(v) = prefs.edit().putBoolean("bandOn", v).apply()
+    var bandVolume: Float
+        get() = prefs.getFloat("bandVolume", 0.8f)
+        set(v) = prefs.edit().putFloat("bandVolume", v).apply()
     var bpm: Int
         get() = prefs.getInt("bpm", 100)
         set(v) = prefs.edit().putInt("bpm", v).apply()

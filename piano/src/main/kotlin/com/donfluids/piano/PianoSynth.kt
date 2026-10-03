@@ -198,6 +198,8 @@ class PianoSynth(
         PIANO("Piano", doubleArrayOf(1.0, 0.55, 0.3, 0.2, 0.12, 0.08), true, 0.003, 0.12),
         ELECTRIC("E-piano", doubleArrayOf(1.0, 0.25, 0.08, 0.3, 0.05, 0.02), true, 0.004, 0.2),
         ORGAN("Organ", doubleArrayOf(0.8, 0.6, 0.45, 0.35, 0.0, 0.3), false, 0.008, 0.05),
+        /** A plucked bass for the band: strong fundamental, quick-fading upper partials. */
+        BASS("Bass", doubleArrayOf(1.0, 0.6, 0.25, 0.1, 0.0, 0.0), true, 0.002, 0.06),
     }
 
     companion object {
