@@ -46,6 +46,10 @@ class Settings(context: Context) {
     var autoStart: Boolean
         get() = prefs.getBoolean("autoStart", true)
         set(v) = prefs.edit().putBoolean("autoStart", v).apply()
+    /** How much better a chord must fit the sung notes before the band leaves the current one, 0.05..0.6. */
+    var switchMargin: Float
+        get() = prefs.getFloat("switchMargin", 0.2f)
+        set(v) = prefs.edit().putFloat("switchMargin", v).apply()
     var followChords: Boolean
         get() = prefs.getBoolean("followChords", true)
         set(v) = prefs.edit().putBoolean("followChords", v).apply()

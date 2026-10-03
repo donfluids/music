@@ -130,6 +130,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var listening by remember { mutableStateOf(false) }
     var followChords by remember { mutableStateOf(settings.followChords) }
     var autoStart by remember { mutableStateOf(settings.autoStart) }
+    var switchMargin by remember { mutableStateOf(settings.switchMargin) }
     var entering by remember { mutableStateOf(false) }
     var lastHarmonizedAt by remember { mutableStateOf(-1L) }
     var matchedStyle by remember { mutableStateOf<Style?>(null) }
@@ -214,7 +215,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 val halfBar = band.barCount * 2 + (if (band.beatIndex * 2 >= bandStyle.beatsPerBar) 1 else 0)
                 if (halfBar != lastHarmonizedAt) {
                     lastHarmonizedAt = halfBar
-                    val next = MelodyHarmonizer(sc).next(heard.recentChroma, bandChord)
+                    val next = MelodyHarmonizer(sc, switchMargin = switchMargin).next(heard.recentChroma, bandChord)
                     if (next != bandChord) { bandChord = next; band.setChord(next) }
                 }
             }
@@ -371,6 +372,20 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
                 SettingRow(stringResource(R.string.auto_start), autoStart) { autoStart = it; settings.autoStart = it }
                 SettingRow(stringResource(R.string.follow_chords), followChords) { followChords = it; settings.followChords = it }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.switch_margin), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Text("${Math.round(switchMargin * 100)}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.switch_margin_eager), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Low margin: the band changes on slight evidence. High: it waits for a clear new chord.
+                    Slider(
+                        value = switchMargin, valueRange = 0.05f..0.6f, steps = 10,
+                        onValueChange = { switchMargin = it }, onValueChangeFinished = { settings.switchMargin = switchMargin },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(stringResource(R.string.switch_margin_steady), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Text(stringResource(R.string.volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
                 Slider(value = volume, onValueChange = { volume = it; synth()?.volume = it }, onValueChangeFinished = { settings.volume = volume })
                 Text(stringResource(R.string.band_volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))

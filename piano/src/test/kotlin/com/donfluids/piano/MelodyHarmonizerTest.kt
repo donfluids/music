@@ -40,6 +40,15 @@ class MelodyHarmonizerTest {
     }
 
     @Test
+    fun marginSetsHowEagerlyTheChordMoves() {
+        val gChord = BandChord(7, BandChord.Quality.MAJOR)
+        // G with a little C: a slightly better fit for C major than for G.
+        val hint = sung(7 to 1f, 0 to 0.9f, 4 to 0.4f)
+        assertEquals("C", MelodyHarmonizer(g, switchMargin = 0.05f).next(hint, gChord).name())
+        assertEquals("G", MelodyHarmonizer(g, switchMargin = 0.6f).next(hint, gChord).name())
+    }
+
+    @Test
     fun minorKeyWorksToo() {
         val h = MelodyHarmonizer(Theory.Scale(9, minor = true))
         assertEquals(listOf("Am", "Bdim", "C", "Dm", "Em", "F", "G"), h.diatonicChords.map { it.name() })

@@ -25,6 +25,9 @@
     <string name="listen_hint">Listening to the song to pick a style. Sing or play a few bars.</string>
     <string name="listen_matched">%1$s · %2$d bpm · %3$s</string>
     <string name="follow_chords">Band follows the chords it hears</string>
+    <string name="switch_margin">Chord change readiness</string>
+    <string name="switch_margin_eager">eager</string>
+    <string name="switch_margin_steady">steady</string>
     <string name="auto_start">Band starts by itself on the next downbeat</string>
     <string name="listen_starting">%1$s · entering on the downbeat</string>
     <string name="mic_denied">Microphone permission is needed to listen to the song.</string>

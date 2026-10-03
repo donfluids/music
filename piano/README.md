@@ -37,7 +37,8 @@ and installs as its own app (`com.donfluids.piano`).
   and, with "Band starts by itself on the next downbeat" on (the default), enters on the
   singers' next downbeat in their time. With "Band follows the chords it hears" on (also the
   default) it harmonises the melody: once per half bar it picks whichever chord of the key
-  best fits the notes just sung, preferring to stay put and favouring the common chords.
+  best fits the notes just sung, preferring to stay put and favouring the common chords. "Chord change readiness" in settings sets how much better a chord must fit before the band
+  moves: eager changes on slight evidence, steady waits for a clear new chord.
   While the band plays, the microphone is reopened with the phone's echo canceller so it
   hears the singers rather than the band's own speaker output. Turn either off in settings to start by hand or hold the chord yourself.
   The band keeps its own tempo once it has entered; if the singers drift, stop and listen
