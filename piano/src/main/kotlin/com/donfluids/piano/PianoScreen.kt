@@ -131,19 +131,18 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     val listener = remember { SongListener(context.applicationContext) }
     var listening by remember { mutableStateOf(false) }
     var followChords by remember { mutableStateOf(settings.followChords) }
-    var autoStart by remember { mutableStateOf(settings.autoStart) }
-    var waitForKey by remember { mutableStateOf(settings.waitForKey) }
-    var keySettleSeconds by remember { mutableStateOf(settings.keySettleSeconds) }
     /** A key the player chose by hand from the candidates; overrides what is heard. */
     var lockedKey by remember { mutableStateOf<Theory.Scale?>(null) }
     var switchMargin by remember { mutableStateOf(settings.switchMargin) }
     var fills by remember { mutableStateOf(settings.fills) }
-    var entering by remember { mutableStateOf(false) }
+    /** The band has a scheduled start and has not sounded yet. */
+    var bandEntering by remember { mutableStateOf(false) }
+    /** The chord the singing implies right now, within the heard or locked key. */
+    var heardChord by remember { mutableStateOf<BandChord?>(null) }
+    var lastHeardChordAt by remember { mutableStateOf(-1f) }
     var lastHarmonizedAt by remember { mutableStateOf(-1L) }
-    var matchedStyle by remember { mutableStateOf<Style?>(null) }
     val tapEntry = remember { TapEntry() }
     var tapCount by remember { mutableStateOf(0) }
-    var tapBeats by remember { mutableStateOf(4) }
     val heard by listener.result.collectAsStateWithLifecycle()
     val micError by listener.error.collectAsStateWithLifecycle()
     val visibleWhite = 14
@@ -179,39 +178,15 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     fun startListening() {
         listener.start(withBand = bandPlaying)
         listening = listener.running
-        matchedStyle = null
         lastHarmonizedAt = -1L
         tapEntry.reset(); tapCount = 0
         lockedKey = null
+        heardChord = null; lastHeardChordAt = -1f
     }
-    fun keyReady(): Boolean = lockedKey != null || !waitForKey || SongMatcher.keySettled(heard, keySettleSeconds)
     fun lockKey(sc: Theory.Scale) {
         lockedKey = sc
         scale = sc; settings.scale = sc
         if (bandOn && !bandPlaying) { val c = BandChord(sc.tonic, if (sc.minor) BandChord.Quality.MINOR else BandChord.Quality.MAJOR); bandChord = c; output()?.band?.setChord(c) }
-    }
-    // Take the matched style, tempo, key and first chord; enter at [at] (now when null).
-    fun applyMatch(m: SongMatcher.Match, at: Long?) {
-        matchedStyle = m.style
-        bandOn = true; settings.bandOn = true
-        bandStyle = m.style; settings.bandStyle = m.style; output()?.band?.style = m.style
-        bpm = m.bpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
-        val sc = lockedKey ?: m.scale
-        sc?.let { scale = it; settings.scale = it }
-        val chord = lockedKey?.let { BandChord(it.tonic, if (it.minor) BandChord.Quality.MINOR else BandChord.Quality.MAJOR) } ?: m.chord
-        chord?.let { bandChord = it; output()?.band?.setChord(it) }
-        if (autoStart && !bandPlaying) {
-            output()?.band?.let { b -> if (at != null) b.startAt(at) else b.playing = true }
-            output()?.metronome?.enabled = false
-            entering = at != null
-            bandPlaying = true
-        }
-    }
-    // Free-time song: the player taps a bar of beats and the band enters on the next one.
-    fun tapBeat() {
-        val e = tapEntry.tap(System.nanoTime())
-        tapCount = tapEntry.count
-        if (e != null) applyMatch(SongMatcher.matchTapped(heard, e.bpm, tapBeats), e.downbeatNanos)
     }
     // Count the band in by hand: one bar of taps in the chosen style sets the tempo, and the
     // band enters on the next downbeat with its current chord (or the key's tonic).
@@ -225,7 +200,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         output()?.band?.startAt(e.downbeatNanos)
         output()?.metronome?.enabled = false
         bandPlaying = true
-        if (listening) { entering = true; matchedStyle = bandStyle }
+        if (listening) bandEntering = true
     }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else micMessage = micDenied
@@ -236,18 +211,31 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (granted) startListening() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
-    // Apply the match once, when the analyser is first sure; chord-following keeps running.
+    // Listening only reads: the key settling and the chord being sung. Starting the band is
+    // the player's act (Tap in, the transport, or a chord), never the listener's.
     LaunchedEffect(heard, listening) {
         if (!listening) return@LaunchedEffect
-        val m = SongMatcher.match(heard)
-        // Enter on the singers' next downbeat, in their time.
-        if (m != null && matchedStyle == null && keyReady()) applyMatch(m, SongMatcher.nextDownbeatNanos(heard, System.nanoTime()))
-        if (entering && output()?.band?.startAtNanos == 0L) {
-            entering = false
+        if (bandEntering && output()?.band?.startAtNanos == 0L) {
+            bandEntering = false
             // The band is now on the speaker: reopen the microphone with echo cancellation.
             listener.setBandPlaying(true)
         }
-        if (followChords && bandOn && bandPlaying && !entering) {
+        if (!bandPlaying) {
+            // Four times a second, name the chord the melody implies within the key.
+            val k = heard.displayKey ?: heard.key
+            val sc = lockedKey ?: k?.let { Theory.Scale(it.tonic, it.mode == com.donfluids.music.music.Mode.MINOR) }
+            if (sc != null && heard.secondsHeard - lastHeardChordAt >= 0.25f) {
+                lastHeardChordAt = heard.secondsHeard
+                val h = MelodyHarmonizer(sc, switchMargin = switchMargin)
+                val next = if (heard.recentChroma.sum() < 1e-4f) heardChord else h.next(heard.recentChroma, heardChord)
+                if (next != heardChord) {
+                    heardChord = next
+                    // The idle band takes the sung chord as its first, so Tap in starts in the right place.
+                    if (bandOn && next != null) { bandChord = next; output()?.band?.setChord(next) }
+                }
+            }
+        }
+        if (followChords && bandOn && bandPlaying && !bandEntering) {
             // Harmonise the melody once per half bar, on the band's own clock, so chord changes
             // land on the beat rather than mid-phrase.
             val band = output()?.band
@@ -309,10 +297,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                     Text(
                         when {
                             !listening -> stringResource(R.string.listen)
-                            matchedStyle != null && entering -> stringResource(R.string.listen_starting, matchedStyle!!.name)
-                            matchedStyle != null -> "→ ${matchedStyle!!.name}"
-                            heard.bpm != null -> "${(heard.displayKey ?: heard.key)?.name ?: "–"} · ${heard.bpm!!.roundToIntSafe()} · ${heard.meterLabel ?: "–"}"
-                            heard.displayKey != null || heard.key != null -> "${(heard.displayKey ?: heard.key)!!.name} · ${stringResource(R.string.listening)}"
+                            lockedKey != null -> lockedKey!!.label
+                            heard.displayKey != null || heard.key != null -> (heard.displayKey ?: heard.key)!!.label
                             else -> stringResource(R.string.listening)
                         },
                     )
@@ -345,39 +331,14 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             }
         }
         (error ?: micError ?: micMessage)?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium) }
-        if (listening && bandPlaying && !entering && !listener.echoCancelling) {
+        if (listening && bandPlaying && !bandEntering && !listener.echoCancelling) {
             Text(stringResource(R.string.speaker_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (listening && matchedStyle == null && !bandPlaying && (heard.displayKey ?: heard.key) != null) {
-            KeySettling(
-                heard = heard, locked = lockedKey, settleSeconds = keySettleSeconds, waiting = waitForKey,
-                onLock = { lockKey(it) },
-            )
+        if (listening && !bandPlaying && (heard.displayKey ?: heard.key) != null) {
+            KeySettling(heard = heard, locked = lockedKey, chord = heardChord, flats = scale?.let { it.spell(1).endsWith("b") } ?: false, onLock = { lockKey(it) })
         }
-        if (listening && matchedStyle == null) {
-            if (SongMatcher.needsTap(heard) && keyReady()) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        stringResource(R.string.tap_hint, heard.displayKey?.label ?: heard.key?.label ?: "–"),
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    SingleChoiceSegmentedButtonRow(Modifier.height(32.dp)) {
-                        listOf(4 to "4/4", 3 to "3/4", 6 to "6/8").forEachIndexed { i, (beats, label) ->
-                            SegmentedButton(
-                                selected = tapBeats == beats,
-                                onClick = { tapBeats = beats; tapEntry.beatsNeeded = if (beats == 3) 3 else 4; tapEntry.reset(); tapCount = 0 },
-                                shape = SegmentedButtonDefaults.itemShape(i, 3), icon = {},
-                            ) { Text(label, style = MaterialTheme.typography.labelSmall) }
-                        }
-                    }
-                    Button(onClick = { tapBeat() }, modifier = Modifier.height(36.dp)) {
-                        Text(stringResource(R.string.tap_beats, tapCount, tapEntry.beatsNeeded))
-                    }
-                }
-            } else {
-                Text(stringResource(R.string.listen_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        if (listening && !bandPlaying && (heard.displayKey ?: heard.key) == null) {
+            Text(stringResource(R.string.listen_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         // Chord row sits directly above the keys so the eye drops from chord to notes.
@@ -452,16 +413,6 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.reverb), reverb) { reverb = it; settings.reverb = it; output()?.reverb?.enabled = it }
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
                 SettingRow(stringResource(R.string.fills), fills) { fills = it; settings.fills = it; output()?.band?.fillsOnChordChange = it }
-                SettingRow(stringResource(R.string.auto_start), autoStart) { autoStart = it; settings.autoStart = it }
-                SettingRow(stringResource(R.string.wait_for_key), waitForKey) { waitForKey = it; settings.waitForKey = it }
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.settle_time), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    Text("$keySettleSeconds s", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Slider(
-                    value = keySettleSeconds.toFloat(), valueRange = 3f..15f, steps = 11,
-                    onValueChange = { keySettleSeconds = Math.round(it) }, onValueChangeFinished = { settings.keySettleSeconds = keySettleSeconds },
-                )
                 SettingRow(stringResource(R.string.follow_chords), followChords) { followChords = it; settings.followChords = it }
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.switch_margin), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
@@ -486,19 +437,29 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     }
 }
 
+/** The shown key counts as settled once it has held this long. */
+private const val KEY_SETTLE_SECONDS = 6
+
 /**
- * The key finder at work: the leading key and its runners-up with their relative strength,
- * and a bar filling as the leader holds still. Tapping a candidate locks it.
+ * What the ear reads: the chord being sung, then the leading key and its runners-up with
+ * their relative strength, and a bar filling as the leader holds still. Tapping a candidate
+ * locks it.
  */
 @Composable
-private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: Theory.Scale?, settleSeconds: Int, waiting: Boolean, onLock: (Theory.Scale) -> Unit) {
+private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: Theory.Scale?, chord: BandChord?, flats: Boolean, onLock: (Theory.Scale) -> Unit) {
     val shown = heard.displayKey ?: heard.key ?: return
-    val settled = SongMatcher.keySettled(heard, settleSeconds)
+    val settled = SongMatcher.keySettled(heard, KEY_SETTLE_SECONDS)
     val leaderScore = heard.keyScore.coerceAtLeast(0.05f)
     val candidates = listOf(shown to 1f) + heard.keyAlternatives.take(2).map { (k, sc) -> k to (sc / leaderScore).coerceIn(0f, 1f) }
-    val progress = if (locked != null) 1f else (heard.keyHeldSeconds / settleSeconds).coerceIn(0f, 1f)
+    val progress = if (locked != null) 1f else (heard.keyHeldSeconds / KEY_SETTLE_SECONDS).coerceIn(0f, 1f)
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // The sung chord, large enough to read from the keys.
+            Text(
+                chord?.name(flats = flats) ?: "–",
+                style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(72.dp),
+            )
             Text(
                 when {
                     locked != null -> "${locked.label} · ${stringResource(R.string.key_locked)}"
@@ -527,7 +488,7 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
             }
             if (locked == null) Text(stringResource(R.string.tap_to_lock), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (waiting) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(3.dp))
+        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(3.dp))
     }
 }
 
