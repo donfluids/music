@@ -31,6 +31,8 @@
     <string name="fills">Drum fill on chord changes</string>
     <string name="auto_start">Band starts by itself on the next downbeat</string>
     <string name="listen_starting">%1$s · entering on the downbeat</string>
+    <string name="tap_hint">%1$s heard, no steady beat. Tap the beat to bring the band in.</string>
+    <string name="tap_beats">Tap %1$d/%2$d</string>
     <string name="mic_denied">Microphone permission is needed to listen to the song.</string>
     <string name="band_hint">Keys below middle C set the chord: one key for major, add the black key below for minor, the white key below for a seventh, or play the chord.</string>
 </resources>

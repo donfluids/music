@@ -23,6 +23,10 @@ data class AnalysisResult(
     /** Cents sharp (+) or flat (-) of A4 = 440 Hz. */
     val tuningCents: Float = 0f,
     val tuningConfidence: Float = 0f,
+    /** Notes sung so far, on the singer's grid, when the preset tracks the melody. */
+    val sungNotes: List<SungNote> = emptyList(),
+    /** True when the shown key came from the melody rather than from chroma. */
+    val keyFromMelody: Boolean = false,
     val bpm: Float? = null,
     val tempoStrength: Float = 0f,
     val tempoLocked: Boolean = false,
@@ -90,6 +94,9 @@ class MusicAnalyzer(
     )
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
     private val chordTracker = ChordTracker()
+    private val pitchTracker = if (preset.melodicKey) PitchTracker(sampleRate) else null
+    private val segmenter = NoteSegmenter()
+    private var keyFromMelody = false
 
     private val windowSize = chromaExtractor.windowSamples
     private val window = FloatArray(windowSize)
@@ -182,6 +189,8 @@ class MusicAnalyzer(
         levelRms = 0.0
         levelSamples = 0
         recentChroma.fill(0f)
+        segmenter.reset()
+        keyFromMelody = false
         chordTracker.reset()
         segments.clear()
         openChord = null
@@ -245,6 +254,7 @@ class MusicAnalyzer(
                 val decay = kotlin.math.exp(-(hopSeconds * chromaEveryHops) / recentChromaSeconds).toFloat()
                 for (i in 0 until 12) recentChroma[i] = recentChroma[i] * decay + chromaExtractor.frameChroma[i]
             }
+            updateMelody()
             updateKey()
             updateChords()
             changed = true
@@ -262,7 +272,37 @@ class MusicAnalyzer(
     private var pendingKeyConfidence = 0f
     private var pendingAlternatives: List<Pair<Key, Float>> = emptyList()
 
+    /** Tracks the sung pitch on the singer's own grid and segments it into notes. */
+    private fun updateMelody() {
+        val tracker = pitchTracker ?: return
+        val now = hopIndex * hopSeconds
+        if (tracker.process(window, windowSize)) {
+            segmenter.push(tracker.midi - chromaExtractor.gridOffsetCents / 100.0, now)
+        } else {
+            segmenter.push(Double.NaN, now)
+        }
+    }
+
     private fun updateKey() {
+        // A lone melody: once enough notes are in, the melodic finder decides and chroma only
+        // breaks ties. Its evidence (phrase endings, the longest note) is what a listener uses.
+        if (pitchTracker != null) {
+            val notes = segmenter.snapshot()
+            val melodic = if (notes.size >= 8) MelodicKeyFinder.rank(notes) else emptyList()
+            if (melodic.size >= 2) {
+                val best = melodic[0]
+                val margin = ((best.score - melodic[1].score) * 4.0).coerceIn(0.0, 1.0)
+                val confidence = (0.5 * best.score.coerceIn(0.0, 1.0) + 0.5 * margin).toFloat()
+                keyFromMelody = true
+                if (shownKey == null || best.key == keyCandidate && ++keyCandidateHits >= 3) shownKey = best.key
+                if (best.key != keyCandidate) { keyCandidate = best.key; keyCandidateHits = 0 }
+                val shown = shownKey ?: best.key
+                pendingKey = shown
+                pendingKeyConfidence = if (shown == best.key) confidence else confidence * 0.5f
+                pendingAlternatives = melodic.filter { it.key != shown }.take(3).map { it.key to it.score.toFloat().coerceIn(0f, 1f) }
+                return
+            }
+        }
         val ranked = KeyDetector.rank(chromaExtractor.accumulatedChroma)
         val confidence = KeyDetector.confidence(ranked).toFloat()
         val best = ranked.first().key
@@ -464,6 +504,8 @@ class MusicAnalyzer(
             keyAlternatives = pendingAlternatives,
             tuningCents = chromaExtractor.tuningOffsetCents().toFloat(),
             tuningConfidence = chromaExtractor.tuningConfidence().toFloat(),
+            sungNotes = if (pitchTracker != null) segmenter.snapshot() else emptyList(),
+            keyFromMelody = keyFromMelody,
             bpm = t?.let { (it.bpm / ratio).toFloat() },
             tempoStrength = t?.strength?.toFloat() ?: 0f,
             tempoLocked = t?.locked ?: false,

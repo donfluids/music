@@ -64,4 +64,47 @@ class SongMatcherTest {
         assertNull(SongMatcher.match(heard(100f, "4/4", locked = false)))
         assertNull(SongMatcher.match(heard(100f, "4/4", meterConfidence = 0.1f)))
     }
+
+    @Test
+    fun asksForTapsWhenTheKeyIsInButNoPulseLocks() {
+        val sung = AnalysisResult(secondsHeard = 9f, tempoLocked = false, key = Key(4, Mode.MAJOR), displayKey = Key(4, Mode.MAJOR))
+        assertEquals(true, SongMatcher.needsTap(sung))
+        assertEquals(false, SongMatcher.needsTap(sung.copy(secondsHeard = 5f)))
+        assertEquals(false, SongMatcher.needsTap(sung.copy(key = null, displayKey = null)))
+        assertEquals(false, SongMatcher.needsTap(sung.copy(tempoLocked = true)))
+    }
+
+    @Test
+    fun tappedMatchTakesTheKeyFromTheEarAndTheStyleFromTheTaps() {
+        val sung = AnalysisResult(secondsHeard = 9f, key = Key(4, Mode.MAJOR), displayKey = Key(4, Mode.MAJOR))
+        val slow = SongMatcher.matchTapped(sung, 76, 4)
+        assertEquals(Style.WORSHIP_SLOW, slow.style)
+        assertEquals(76, slow.bpm)
+        assertEquals(Theory.Scale(4, minor = false), slow.scale)
+        assertEquals(BandChord(4, BandChord.Quality.MAJOR), slow.chord)
+        assertEquals(Style.WALTZ, SongMatcher.matchTapped(sung, 100, 3).style)
+        assertEquals(Style.WORSHIP_68, SongMatcher.matchTapped(sung, 60, 6).style)
+        assertEquals(Style.POWER_ROCK, SongMatcher.matchTapped(sung, 150, 4).style)
+    }
+
+    @Test
+    fun fourTapsSetTheTempoAndTheNextDownbeat() {
+        val t = TapEntry()
+        val s = 1_000_000_000L
+        assertNull(t.tap(10 * s)); assertEquals(1, t.count)
+        assertNull(t.tap(10 * s + 750_000_000L))
+        assertNull(t.tap(11 * s + 500_000_000L))
+        val e = t.tap(12 * s + 250_000_000L)!!
+        assertEquals(80, e.bpm)
+        assertEquals(750_000_000L, e.periodNanos)
+        assertEquals(13 * s, e.downbeatNanos)
+        assertEquals(0, t.count)
+        // A long pause starts the count over.
+        assertNull(t.tap(20 * s)); assertNull(t.tap(20 * s + 500_000_000L))
+        assertNull(t.tap(25 * s)); assertEquals(1, t.count)
+        // A waltz counts three.
+        val w = TapEntry(beatsNeeded = 3)
+        assertNull(w.tap(0)); assertNull(w.tap(s))
+        assertEquals(60, w.tap(2 * s)!!.bpm)
+    }
 }

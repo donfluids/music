@@ -37,6 +37,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -135,6 +136,9 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var entering by remember { mutableStateOf(false) }
     var lastHarmonizedAt by remember { mutableStateOf(-1L) }
     var matchedStyle by remember { mutableStateOf<Style?>(null) }
+    val tapEntry = remember { TapEntry() }
+    var tapCount by remember { mutableStateOf(0) }
+    var tapBeats by remember { mutableStateOf(4) }
     val heard by listener.result.collectAsStateWithLifecycle()
     val micError by listener.error.collectAsStateWithLifecycle()
     val visibleWhite = 14
@@ -172,6 +176,28 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         listening = listener.running
         matchedStyle = null
         lastHarmonizedAt = -1L
+        tapEntry.reset(); tapCount = 0
+    }
+    // Take the matched style, tempo, key and first chord; enter at [at] (now when null).
+    fun applyMatch(m: SongMatcher.Match, at: Long?) {
+        matchedStyle = m.style
+        bandOn = true; settings.bandOn = true
+        bandStyle = m.style; settings.bandStyle = m.style; output()?.band?.style = m.style
+        bpm = m.bpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
+        m.scale?.let { scale = it; settings.scale = it }
+        m.chord?.let { bandChord = it; output()?.band?.setChord(it) }
+        if (autoStart && !bandPlaying) {
+            output()?.band?.let { b -> if (at != null) b.startAt(at) else b.playing = true }
+            output()?.metronome?.enabled = false
+            entering = at != null
+            bandPlaying = true
+        }
+    }
+    // Free-time song: the player taps a bar of beats and the band enters on the next one.
+    fun tapBeat() {
+        val e = tapEntry.tap(System.nanoTime())
+        tapCount = tapEntry.count
+        if (e != null) applyMatch(SongMatcher.matchTapped(heard, e.bpm, tapBeats), e.downbeatNanos)
     }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else micMessage = micDenied
@@ -186,22 +212,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     LaunchedEffect(heard, listening) {
         if (!listening) return@LaunchedEffect
         val m = SongMatcher.match(heard)
-        if (m != null && matchedStyle == null) {
-            matchedStyle = m.style
-            bandOn = true; settings.bandOn = true
-            bandStyle = m.style; settings.bandStyle = m.style; output()?.band?.style = m.style
-            bpm = m.bpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
-            m.scale?.let { scale = it; settings.scale = it }
-            m.chord?.let { bandChord = it; output()?.band?.setChord(it) }
-            if (autoStart && !bandPlaying) {
-                // Enter on the singers' next downbeat, in their time.
-                val at = SongMatcher.nextDownbeatNanos(heard, System.nanoTime())
-                output()?.band?.let { b -> if (at != null) b.startAt(at) else b.playing = true }
-                output()?.metronome?.enabled = false
-                entering = at != null
-                bandPlaying = true
-            }
-        }
+        // Enter on the singers' next downbeat, in their time.
+        if (m != null && matchedStyle == null) applyMatch(m, SongMatcher.nextDownbeatNanos(heard, System.nanoTime()))
         if (entering && output()?.band?.startAtNanos == 0L) {
             entering = false
             // The band is now on the speaker: reopen the microphone with echo cancellation.
@@ -303,7 +315,29 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         }
         (error ?: micError ?: micMessage)?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium) }
         if (listening && matchedStyle == null) {
-            Text(stringResource(R.string.listen_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (SongMatcher.needsTap(heard)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        stringResource(R.string.tap_hint, heard.displayKey?.label ?: heard.key?.label ?: "–"),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SingleChoiceSegmentedButtonRow(Modifier.height(32.dp)) {
+                        listOf(4 to "4/4", 3 to "3/4", 6 to "6/8").forEachIndexed { i, (beats, label) ->
+                            SegmentedButton(
+                                selected = tapBeats == beats,
+                                onClick = { tapBeats = beats; tapEntry.beatsNeeded = if (beats == 3) 3 else 4; tapEntry.reset(); tapCount = 0 },
+                                shape = SegmentedButtonDefaults.itemShape(i, 3), icon = {},
+                            ) { Text(label, style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                    Button(onClick = { tapBeat() }, modifier = Modifier.height(36.dp)) {
+                        Text(stringResource(R.string.tap_beats, tapCount, tapEntry.beatsNeeded))
+                    }
+                }
+            } else {
+                Text(stringResource(R.string.listen_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
 
         // Chord row sits directly above the keys so the eye drops from chord to notes.

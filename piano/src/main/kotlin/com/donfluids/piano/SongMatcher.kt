@@ -32,6 +32,29 @@ object SongMatcher {
 
     data class Match(val style: Style, val bpm: Int, val scale: Theory.Scale?, val chord: BandChord?, val reason: String)
 
+    /**
+     * A sung song with no steady pulse: the key is in but the tempo never locks. After
+     * [afterSeconds] of that, the player taps the beat instead of waiting.
+     */
+    fun needsTap(a: AnalysisResult, afterSeconds: Float = 8f): Boolean =
+        a.secondsHeard >= afterSeconds && !a.tempoLocked && (a.displayKey ?: a.key) != null
+
+    /** The match for a tapped tempo: style from the taps and the chosen bar length, key from the ear. */
+    fun matchTapped(a: AnalysisResult, bpm: Int, beatsPerBar: Int): Match {
+        val key = a.displayKey ?: a.key
+        val scale = key?.let { Theory.Scale(it.tonic, it.mode == Mode.MINOR) }
+        val chord = key?.let { BandChord(it.tonic, if (it.mode == Mode.MINOR) BandChord.Quality.MINOR else BandChord.Quality.MAJOR) }
+        val (style, reason) = when {
+            beatsPerBar == 6 -> Style.WORSHIP_68 to "tapped six"
+            beatsPerBar == 3 -> Style.WALTZ to "tapped three"
+            bpm < 88 -> Style.WORSHIP_SLOW to "tapped slow four"
+            bpm < 112 -> Style.POP_16 to "tapped medium four"
+            bpm < 138 -> Style.ROCK_8 to "tapped driving four"
+            else -> Style.POWER_ROCK to "tapped fast four"
+        }
+        return Match(style, bpm.coerceIn(30, 240), scale, chord, reason)
+    }
+
     /** Null until the analyser has a tempo and a time signature it is reasonably sure of. */
     fun match(a: AnalysisResult): Match? {
         val bpm = a.bpm ?: return null
