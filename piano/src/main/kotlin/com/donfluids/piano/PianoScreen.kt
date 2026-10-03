@@ -131,6 +131,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var followChords by remember { mutableStateOf(settings.followChords) }
     var autoStart by remember { mutableStateOf(settings.autoStart) }
     var switchMargin by remember { mutableStateOf(settings.switchMargin) }
+    var fills by remember { mutableStateOf(settings.fills) }
     var entering by remember { mutableStateOf(false) }
     var lastHarmonizedAt by remember { mutableStateOf(-1L) }
     var matchedStyle by remember { mutableStateOf<Style?>(null) }
@@ -370,6 +371,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.note_names), showNames) { showNames = it; settings.showNames = it }
                 SettingRow(stringResource(R.string.reverb), reverb) { reverb = it; settings.reverb = it; output()?.reverb?.enabled = it }
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
+                SettingRow(stringResource(R.string.fills), fills) { fills = it; settings.fills = it; output()?.band?.fillsOnChordChange = it }
                 SettingRow(stringResource(R.string.auto_start), autoStart) { autoStart = it; settings.autoStart = it }
                 SettingRow(stringResource(R.string.follow_chords), followChords) { followChords = it; settings.followChords = it }
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {

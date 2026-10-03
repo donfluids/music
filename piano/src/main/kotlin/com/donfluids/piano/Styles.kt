@@ -64,7 +64,7 @@ data class BandChord(val root: Int, val quality: Quality) {
     }
 }
 
-enum class Drum { KICK, SNARE, HAT, OPEN_HAT, SHAKER, RIM, CRASH }
+enum class Drum { KICK, SNARE, HAT, OPEN_HAT, SHAKER, RIM, CRASH, TOM_HI, TOM_LO }
 
 /** What the bass plays at a step, relative to the current chord. */
 enum class BassDegree { ROOT, THIRD, FIFTH, SIXTH, SEVENTH, OCTAVE, FIFTH_BELOW }
@@ -95,6 +95,23 @@ class Style(
     val comp: List<CompHit>,
 ) {
     val stepsPerBar get() = beatsPerBar * stepsPerBeat
+
+    /** First step of the fill region: the last beat of the bar. */
+    val fillStart get() = stepsPerBar - stepsPerBeat
+
+    /**
+     * A one-beat drum fill that replaces the pattern's last beat when the chord changes:
+     * snares building into toms, then a crash on the next downbeat. Steps are bar-relative.
+     */
+    val fill: List<DrumHit> get() {
+        val n = stepsPerBeat
+        val s = fillStart
+        return when (n) {
+            4 -> listOf(DrumHit(s, Drum.SNARE, 0.6f), DrumHit(s + 1, Drum.SNARE, 0.7f), DrumHit(s + 2, Drum.TOM_HI, 0.85f), DrumHit(s + 3, Drum.TOM_LO, 1f))
+            6 -> listOf(DrumHit(s, Drum.SNARE, 0.6f), DrumHit(s + 2, Drum.SNARE, 0.7f), DrumHit(s + 3, Drum.TOM_HI, 0.8f), DrumHit(s + 4, Drum.TOM_HI, 0.85f), DrumHit(s + 5, Drum.TOM_LO, 1f))
+            else -> (0 until n).map { DrumHit(s + it, if (it < n / 2) Drum.SNARE else Drum.TOM_LO, 0.6f + 0.4f * it / n) }
+        }
+    }
 
     companion object {
         private fun hat(vararg steps: Int, v: Float = 0.5f) = steps.map { DrumHit(it, Drum.HAT, v) }

@@ -50,6 +50,9 @@ class Settings(context: Context) {
     var switchMargin: Float
         get() = prefs.getFloat("switchMargin", 0.2f)
         set(v) = prefs.edit().putFloat("switchMargin", v).apply()
+    var fills: Boolean
+        get() = prefs.getBoolean("fills", true)
+        set(v) = prefs.edit().putBoolean("fills", v).apply()
     var followChords: Boolean
         get() = prefs.getBoolean("followChords", true)
         set(v) = prefs.edit().putBoolean("followChords", v).apply()

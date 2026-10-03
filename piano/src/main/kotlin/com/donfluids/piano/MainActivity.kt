@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
             it.band.style = settings.bandStyle
             it.band.bpm = settings.bpm
             it.band.volume = settings.bandVolume
+            it.band.fillsOnChordChange = settings.fills
             it.metronome.beatsPerBar = settings.beatsPerBar
             it.start()
         }

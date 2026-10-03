@@ -22,7 +22,11 @@ class DrumKit(private val sampleRate: Int, voices: Int = 12) {
     private var next = 0
     private val lock = Any()
 
+    /** Observes every hit; for tests and displays. */
+    @Volatile var onTrigger: ((Drum, Float) -> Unit)? = null
+
     fun trigger(drum: Drum, velocity: Float) {
+        onTrigger?.invoke(drum, velocity)
         synchronized(lock) {
             // Closing the hat silences an open hat, as on a real kit.
             if (drum == Drum.HAT) for (h in hits) if (h.active && h.drum == Drum.OPEN_HAT) h.active = false
@@ -55,6 +59,16 @@ class DrumKit(private val sampleRate: Int, voices: Int = 12) {
                         Drum.OPEN_HAT -> (highPassed(h, white(h), 0.7f) * exp(-t / 0.25).toFloat() * 0.4f)
                         Drum.SHAKER -> (highPassed(h, white(h), 0.5f) * (if (t < 0.01) (t / 0.01).toFloat() else exp(-(t - 0.01) / 0.05).toFloat()) * 0.4f)
                         Drum.RIM -> (sin(2 * PI * 420.0 * t) * exp(-t / 0.018) * 0.6 + click(h, t, 0.002) * 0.4).toFloat()
+                        Drum.TOM_HI -> {
+                            val f = 160.0 + 90.0 * exp(-t / 0.04)
+                            h.phase += 2 * PI * f / sampleRate
+                            (sin(h.phase) * exp(-t / 0.18) * 0.9 + click(h, t, 0.003) * 0.25).toFloat()
+                        }
+                        Drum.TOM_LO -> {
+                            val f = 100.0 + 60.0 * exp(-t / 0.05)
+                            h.phase += 2 * PI * f / sampleRate
+                            (sin(h.phase) * exp(-t / 0.24) * 1.0 + click(h, t, 0.003) * 0.25).toFloat()
+                        }
                         Drum.CRASH -> {
                             // Bright noise with a touch of inharmonic ring, long decay.
                             val ring = (sin(2 * PI * 3140.0 * t) + sin(2 * PI * 4730.0 * t)) * 0.08 * exp(-t / 0.5)
@@ -64,7 +78,7 @@ class DrumKit(private val sampleRate: Int, voices: Int = 12) {
                     out[offset + i] += s * h.velocity
                     h.n++
                 }
-                val length = when (h.drum) { Drum.KICK -> 0.5; Drum.SNARE -> 0.3; Drum.HAT -> 0.1; Drum.OPEN_HAT -> 0.8; Drum.SHAKER -> 0.2; Drum.RIM -> 0.08; Drum.CRASH -> 2.0 }
+                val length = when (h.drum) { Drum.KICK -> 0.5; Drum.SNARE -> 0.3; Drum.HAT -> 0.1; Drum.OPEN_HAT -> 0.8; Drum.SHAKER -> 0.2; Drum.RIM -> 0.08; Drum.CRASH -> 2.0; Drum.TOM_HI -> 0.4; Drum.TOM_LO -> 0.5 }
                 if (h.n > length * sampleRate) h.active = false
             }
         }

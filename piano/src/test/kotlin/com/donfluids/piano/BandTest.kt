@@ -148,6 +148,44 @@ class BandTest {
     }
 
     @Test
+    fun chordChangePlaysAFillAndCrashesOnTheDownbeat() {
+        val band = Accompaniment(rate)
+        band.style = Style.POP_16; band.bpm = 120
+        band.setChord(BandChord(0, BandChord.Quality.MAJOR))
+        band.playing = true
+        val log = ArrayList<Triple<Long, Int, Drum>>() // bar, beat, drum
+        band.drums.onTrigger = { d, _ -> log += Triple(band.barCount, band.beatIndex, d) }
+        run(band, 1.0)                                   // half a bar in
+        band.setChord(BandChord(5, BandChord.Quality.MAJOR))
+        run(band, 3.0)                                   // through the rest of bar 0, bar 1, into bar 2
+        val fillBeat = log.filter { it.first == 0L && it.second == 3 }.map { it.third }
+        assertTrue("fill has toms in bar 0 beat 4: $fillBeat", Drum.TOM_LO in fillBeat && Drum.SNARE in fillBeat)
+        assertTrue("fill replaces the hats", Drum.HAT !in fillBeat)
+        val downbeat = log.filter { it.first == 1L && it.second == 0 }.map { it.third }
+        assertTrue("crash on the next downbeat: $downbeat", Drum.CRASH in downbeat)
+        assertEquals(1, band.fillCount)
+        // A quiet bar afterwards: no toms in bar 1's last beat.
+        val calm = log.filter { it.first == 1L && it.second == 3 }.map { it.third }
+        assertTrue("no fill without a change: $calm", Drum.TOM_LO !in calm)
+    }
+
+    @Test
+    fun fillsAreRateLimitedAndOptional() {
+        val band = Accompaniment(rate)
+        band.style = Style.ROCK_8; band.bpm = 120
+        band.setChord(BandChord(0, BandChord.Quality.MAJOR)); band.playing = true
+        run(band, 0.3)
+        for (root in listOf(5, 7, 9, 0)) { band.setChord(BandChord(root, BandChord.Quality.MAJOR)); run(band, 0.4) }
+        run(band, 2.0)
+        assertTrue("at most one fill per two bars: ${band.fillCount}", band.fillCount <= 2)
+        val quiet = Accompaniment(rate)
+        quiet.style = Style.ROCK_8; quiet.bpm = 120; quiet.fillsOnChordChange = false
+        quiet.setChord(BandChord(0, BandChord.Quality.MAJOR)); quiet.playing = true
+        run(quiet, 0.5); quiet.setChord(BandChord(5, BandChord.Quality.MAJOR)); run(quiet, 3.0)
+        assertEquals(0, quiet.fillCount)
+    }
+
+    @Test
     fun everyStyleRendersCleanly() {
         for (s in Style.ALL) {
             val band = Accompaniment(rate)

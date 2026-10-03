@@ -29,7 +29,9 @@ and installs as its own app (`com.donfluids.piano`).
   for a seventh; or play the chord with three or more fingers. The band (synthesised drums,
   bass and electric piano) starts on the first chord, or from the play button in the pill,
   and follows the shared tempo. The keys above middle C play as usual over it, and the scale
-  chord buttons set the band's chord too. Band volume is in settings.
+  chord buttons set the band's chord too. When the chord changes, the drummer plays a fill
+  through the last beat of the bar and crashes on the next downbeat (at most once every two
+  bars; off in settings). Band volume is in settings.
 - **Listen**: tap the ear and sing or play a few bars. The piano runs LiveKey's analyser on
   the microphone, reads the key, tempo and time signature, and as soon as it is sure it picks
   the style that fits (compound time to Worship 6/8, three to Waltz, a slow four to Worship

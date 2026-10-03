@@ -28,6 +28,7 @@
     <string name="switch_margin">Chord change readiness</string>
     <string name="switch_margin_eager">eager</string>
     <string name="switch_margin_steady">steady</string>
+    <string name="fills">Drum fill on chord changes</string>
     <string name="auto_start">Band starts by itself on the next downbeat</string>
     <string name="listen_starting">%1$s · entering on the downbeat</string>
     <string name="mic_denied">Microphone permission is needed to listen to the song.</string>

@@ -16,6 +16,8 @@ class Accompaniment(private val sampleRate: Int) {
     @Volatile var bpm: Int = 72
     /** Overall band level, 0..1. */
     @Volatile var volume: Float = 0.8f
+    /** Play a drum fill into the next downbeat when the chord changes. */
+    @Volatile var fillsOnChordChange: Boolean = true
     @Volatile var playing: Boolean = false
         set(value) { if (value && !field) restart = true; field = value; if (!value) { stopNotes = true; startAtNanos = 0L } }
 
@@ -41,7 +43,13 @@ class Accompaniment(private val sampleRate: Int) {
     @Volatile private var stopNotes = false
     private var samplePos = 0.0 // position within the bar, in samples
     private var nextEvent = 0
-    private class Event(val sample: Double, val step: Int, val drum: DrumHit?, val bass: BassNote?, val comp: CompHit?)
+    private class Event(val sample: Double, val step: Int, val drum: DrumHit?, val bass: BassNote?, val comp: CompHit?, val fill: Boolean = false)
+    @Volatile private var fillRequested = false
+    private var fillActiveThisBar = false
+    private var crashNextDownbeat = false
+    private var lastFillBar = -10L
+    /** Fills played so far; for tests. */
+    @Volatile var fillCount: Int = 0; private set
     private var events: List<Event> = emptyList()
     private var eventsForStyle: Style? = null
     private var eventsForBpm = 0
@@ -52,6 +60,7 @@ class Accompaniment(private val sampleRate: Int) {
     /** Sets the chord the band plays; takes effect within a few milliseconds. */
     fun setChord(c: BandChord?) {
         if (c == null) return
+        if (playing && fillsOnChordChange && c != currentChord) fillRequested = true
         pendingChord = c
         chordChanged = true
     }
@@ -70,6 +79,7 @@ class Accompaniment(private val sampleRate: Int) {
         s.drums.forEach { list += Event(pos(it.step), it.step, it, null, null) }
         s.bass.forEach { list += Event(pos(it.step), it.step, null, it, null) }
         s.comp.forEach { list += Event(pos(it.step), it.step, null, null, it) }
+        s.fill.forEach { list += Event(pos(it.step), it.step, it, null, null, fill = true) }
         events = list.sortedBy { it.sample }
         eventsForStyle = s
         eventsForBpm = bpm
@@ -94,10 +104,19 @@ class Accompaniment(private val sampleRate: Int) {
             startAtNanos = 0L
             playing = true
         }
-        if (restart) { restart = false; samplePos = 0.0; nextEvent = 0; beatIndex = -1; barCount = 0; comp.allNotesOff(); bass.allNotesOff(); compNotes.clear(); bassNote = -1 }
+        if (restart) { restart = false; samplePos = 0.0; nextEvent = 0; beatIndex = -1; barCount = 0; comp.allNotesOff(); bass.allNotesOff(); compNotes.clear(); bassNote = -1; fillRequested = false; fillActiveThisBar = false; crashNextDownbeat = false; lastFillBar = -10L }
         if (eventsForStyle !== style || eventsForBpm != bpm) { rebuildEvents(); nextEvent = events.indexOfFirst { it.sample >= samplePos }.let { if (it < 0) events.size else it } }
         val barSamples = stepSamples() * style.stepsPerBar
+        val fillStartSample = style.fillStart * stepSamples()
         while (done < frames) {
+            // A requested fill takes this bar's last beat if that beat is still ahead, else the
+            // next bar's; never two fills within two bars.
+            if (fillRequested && !fillActiveThisBar && samplePos < fillStartSample && barCount - lastFillBar >= 2) {
+                fillRequested = false
+                fillActiveThisBar = true
+                lastFillBar = barCount
+                fillCount++
+            }
             if (chordChanged) {
                 chordChanged = false
                 val c = pendingChord
@@ -113,7 +132,10 @@ class Accompaniment(private val sampleRate: Int) {
                 fire(events[nextEvent], nowNanos + ((done - (samplePos - events[nextEvent].sample)) / sampleRate * 1e9).toLong())
                 nextEvent++
             }
-            if (samplePos >= barSamples) { samplePos -= barSamples; nextEvent = 0; barCount++ }
+            if (samplePos >= barSamples) {
+                samplePos -= barSamples; nextEvent = 0; barCount++
+                if (fillActiveThisBar) { fillActiveThisBar = false; crashNextDownbeat = true }
+            }
         }
     }
 
@@ -140,7 +162,19 @@ class Accompaniment(private val sampleRate: Int) {
             val beat = e.step / s.stepsPerBeat
             if (beat != beatIndex || e.step == 0) { beatIndex = beat; beatAtNanos = atNanos }
         }
-        e.drum?.let { drums.trigger(it.drum, it.velocity) }
+        e.drum?.let { hit ->
+            // During a fill the pattern's drums in the fill region give way to the fill's hits.
+            val inFillRegion = e.step >= s.fillStart
+            when {
+                e.fill -> if (fillActiveThisBar) drums.trigger(hit.drum, hit.velocity)
+                inFillRegion && fillActiveThisBar -> Unit
+                else -> drums.trigger(hit.drum, hit.velocity)
+            }
+            if (e.step == 0 && crashNextDownbeat && !e.fill) {
+                crashNextDownbeat = false
+                if (s.drums.none { it.step == 0 && it.drum == Drum.CRASH }) drums.trigger(Drum.CRASH, 0.6f)
+            }
+        }
         val c = chord ?: return
         e.bass?.let { b ->
             if (bassNote >= 0) bass.noteOff(bassNote)
