@@ -242,7 +242,9 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 val halfBar = band.barCount * 2 + (if (band.beatIndex * 2 >= bandStyle.beatsPerBar) 1 else 0)
                 if (halfBar != lastHarmonizedAt) {
                     lastHarmonizedAt = halfBar
-                    val next = MelodyHarmonizer(sc, switchMargin = switchMargin).next(heard.recentChroma, bandChord)
+                    // Through the speaker the band is in the microphone too; the harmoniser discounts its chord.
+                    val leak = if (listener.echoCancelling) 0.7f else 0.4f
+                    val next = MelodyHarmonizer(sc, switchMargin = switchMargin).next(heard.recentChroma, bandChord, bandLeak = leak)
                     if (next != bandChord) { bandChord = next; band.setChord(next) }
                 }
             }
@@ -295,7 +297,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                             !listening -> stringResource(R.string.listen)
                             matchedStyle != null && entering -> stringResource(R.string.listen_starting, matchedStyle!!.name)
                             matchedStyle != null -> "→ ${matchedStyle!!.name}"
-                            heard.bpm != null -> "${heard.key?.name ?: "–"} · ${heard.bpm!!.roundToIntSafe()} · ${heard.meterLabel ?: "–"}"
+                            heard.bpm != null -> "${(heard.displayKey ?: heard.key)?.name ?: "–"} · ${heard.bpm!!.roundToIntSafe()} · ${heard.meterLabel ?: "–"}"
+                            heard.displayKey != null || heard.key != null -> "${(heard.displayKey ?: heard.key)!!.name} · ${stringResource(R.string.listening)}"
                             else -> stringResource(R.string.listening)
                         },
                     )
@@ -328,6 +331,9 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             }
         }
         (error ?: micError ?: micMessage)?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium) }
+        if (listening && bandPlaying && !entering && !listener.echoCancelling) {
+            Text(stringResource(R.string.speaker_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (listening && matchedStyle == null) {
             if (SongMatcher.needsTap(heard)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

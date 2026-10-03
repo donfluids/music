@@ -56,4 +56,16 @@ class MelodyHarmonizerTest {
         assertEquals("F", h.next(sung(5 to 1f, 9 to 0.7f, 0 to 0.7f), am).name())
         assertEquals("G", h.next(sung(7 to 1f, 11 to 0.8f, 2 to 0.6f), am).name())
     }
+
+    @Test
+    fun leakGuardDiscountsTheBandsOwnChord() {
+        val h = MelodyHarmonizer(g)
+        val gChord = BandChord(7, BandChord.Quality.MAJOR)
+        // The speaker puts a loud G chord into the microphone; the singer has moved to C and E.
+        val mic = sung(7 to 1f, 11 to 0.8f, 2 to 0.8f, 0 to 0.7f, 4 to 0.5f)
+        assertEquals("G", h.next(mic, gChord).name())
+        assertEquals("C", h.next(mic, gChord, bandLeak = 0.4f).name())
+        // Singing only chord tones: the guard changes nothing.
+        assertEquals("G", h.next(sung(7 to 1f, 2 to 0.6f), gChord, bandLeak = 0.4f).name())
+    }
 }

@@ -52,7 +52,7 @@ class FollowEndToEndTest {
     }
 
     /** Runs the follower over [mic], returning the chord the band was playing at the end of each bar. */
-    private fun follow(mic: FloatArray, leakBand: Boolean): List<String> {
+    private fun follow(mic: FloatArray, leakBand: Boolean, bandLeak: Float = 1f): List<String> {
         val analyzer = MusicAnalyzer(rate, AnalysisPreset.VOICES)
         val band = Accompaniment(rate)
         band.style = Style.POP_16; band.bpm = bpm; band.playing = true
@@ -75,7 +75,7 @@ class FollowEndToEndTest {
             val halfBar = band.barCount * 2 + (if (band.beatIndex * 2 >= 4) 1 else 0)
             if (halfBar != lastHalfBar) {
                 lastHalfBar = halfBar
-                val next = harmonizer.next(analyzer.result.recentChroma, chord)
+                val next = harmonizer.next(analyzer.result.recentChroma, chord, bandLeak = bandLeak)
                 if (next != chord) { chord = next; band.setChord(next) }
             }
             if (band.barCount != lastBar) { if (lastBar >= 0) chordsAtBarEnd += chord.name(); lastBar = band.barCount }
@@ -104,5 +104,17 @@ class FollowEndToEndTest {
         val leakedScore = leaked.indices.count { leaked[it] == expected[it] }
         println("clean $clean = $cleanScore/8; leaked $leaked = $leakedScore/8")
         assertTrue("leakage should not do better than a clean signal", leakedScore <= cleanScore)
+    }
+
+    @Test
+    fun theLeakGuardLetsTheSpeakerCaseFollowToo() {
+        val expected = listOf("G", "G", "C", "C", "D", "D", "Em", "Em")
+        val guarded = follow(melody(), leakBand = true, bandLeak = 0.4f)
+        val guardedScore = guarded.indices.count { guarded[it] == expected[it] }
+        val clean = follow(melody(), leakBand = false, bandLeak = 0.4f)
+        val cleanScore = clean.indices.count { clean[it] == expected[it] }
+        println("guarded leaked $guarded = $guardedScore/8; guarded clean $clean = $cleanScore/8")
+        assertTrue("leaked with guard: $guardedScore/8", guardedScore >= 6)
+        assertTrue("clean with guard: $cleanScore/8", cleanScore >= 7)
     }
 }

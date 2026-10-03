@@ -294,8 +294,12 @@ class MusicAnalyzer(
                 val margin = ((best.score - melodic[1].score) * 4.0).coerceIn(0.0, 1.0)
                 val confidence = (0.5 * best.score.coerceIn(0.0, 1.0) + 0.5 * margin).toFloat()
                 keyFromMelody = true
-                if (shownKey == null || best.key == keyCandidate && ++keyCandidateHits >= 3) shownKey = best.key
-                if (best.key != keyCandidate) { keyCandidate = best.key; keyCandidateHits = 0 }
+                // A challenger must lead the shown key clearly, and keep leading for about
+                // a second and a half, before the display moves: near-ties flip every note.
+                val shownScore = shownKey?.let { k -> melodic.firstOrNull { it.key == k }?.score } ?: Double.NEGATIVE_INFINITY
+                val leadsClearly = best.score - shownScore > 0.04
+                if (best.key == keyCandidate && leadsClearly) keyCandidateHits++ else { keyCandidate = best.key; keyCandidateHits = if (leadsClearly) 1 else 0 }
+                if (shownKey == null || keyCandidateHits >= keyHitsToSwitch * 3) shownKey = best.key
                 val shown = shownKey ?: best.key
                 pendingKey = shown
                 pendingKeyConfidence = if (shown == best.key) confidence else confidence * 0.5f

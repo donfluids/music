@@ -88,4 +88,25 @@ class MelodyKeyTest {
             assertTrue("midi $midi got ${tracker.midi}", abs(tracker.midi - midi) < 0.1)
         }
     }
+
+    @Test
+    fun theShownKeyHoldsStillWhileThePhraseIsSung() {
+        // A line that starts on the dominant and the sixth, which also fit B major and C# minor,
+        // then settles on E. The display should move at most once or twice, never flicker.
+        val rate = 44100
+        val line = listOf(71, 73, 71, 68, 71, 73, 76, 73, 71, 68, 66, 64, 64, 68, 71, 64)
+        val audio = sing(line.mapIndexed { i, m -> m to (if (i == line.size - 1) 0.9 else 0.35) }, offsetCents = 0.0, gapAfter = setOf(7))
+        val analyzer = MusicAnalyzer(rate, AnalysisPreset.VOICES)
+        val seen = ArrayList<String>()
+        var i = 0
+        while (i < audio.size) {
+            val n = minOf(1024, audio.size - i)
+            analyzer.process(audio.copyOfRange(i, i + n), n, ((i + n).toDouble() / rate * 1e9).toLong())
+            val k = analyzer.result.key?.label
+            if (k != null && (seen.isEmpty() || seen.last() != k)) seen += k
+            i += n
+        }
+        assertTrue("shown keys: $seen", seen.size <= 3)
+        assertEquals("E major", seen.last())
+    }
 }

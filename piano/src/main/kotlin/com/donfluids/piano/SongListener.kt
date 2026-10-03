@@ -36,22 +36,30 @@ class SongListener(private val context: Context) {
             echoCancel = withBand,
         )
         try { cap.start() } catch (e: Exception) { _error.value = e.message ?: "Could not open the microphone"; return }
-        analyzer = MusicAnalyzer(cap.sampleRate, AnalysisPreset.VOICES)
+        // Keep what was already heard when only the microphone path changes.
+        val kept = analyzer?.takeIf { keepAnalysis && it.sampleRate == cap.sampleRate }
+        analyzer = kept ?: MusicAnalyzer(cap.sampleRate, AnalysisPreset.VOICES)
+        keepAnalysis = false
         capture = cap
         cancelling = withBand
-        _result.value = AnalysisResult()
+        if (kept == null) _result.value = AnalysisResult()
     }
 
-    /** Reopens the microphone with or without echo cancellation; the analysis starts afresh. */
+    private var keepAnalysis = false
+
+    /** Reopens the microphone with or without echo cancellation; the song heard so far is kept. */
     fun setBandPlaying(playing: Boolean) {
         if (capture == null || playing == cancelling) return
-        stop()
+        capture?.stop()
+        capture = null
+        keepAnalysis = true
         start(withBand = playing)
     }
 
     fun stop() {
         capture?.stop()
         capture = null
+        analyzer = null
     }
 
     /** Forget the previous song. */
