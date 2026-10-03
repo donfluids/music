@@ -64,13 +64,13 @@ data class BandChord(val root: Int, val quality: Quality) {
     }
 }
 
-enum class Drum { KICK, SNARE, HAT, OPEN_HAT, SHAKER, RIM }
+enum class Drum { KICK, SNARE, HAT, OPEN_HAT, SHAKER, RIM, CRASH }
 
 /** What the bass plays at a step, relative to the current chord. */
 enum class BassDegree { ROOT, THIRD, FIFTH, SIXTH, SEVENTH, OCTAVE, FIFTH_BELOW }
 
 /** How the comping instrument voices a hit. */
-enum class Voicing { FULL, UPPER, ARP0, ARP1, ARP2, ARP3 }
+enum class Voicing { FULL, UPPER, ARP0, ARP1, ARP2, ARP3, POWER }
 
 class DrumHit(val step: Int, val drum: Drum, val velocity: Float)
 class BassNote(val step: Int, val degree: BassDegree, val lengthSteps: Int, val velocity: Float = 0.9f)
@@ -88,6 +88,8 @@ class Style(
     val defaultBpm: Int,
     val label: String,
     val swing: Float = 0f,
+    /** Instrument for the comping part. */
+    val compTone: PianoSynth.Tone = PianoSynth.Tone.ELECTRIC,
     val drums: List<DrumHit>,
     val bass: List<BassNote>,
     val comp: List<CompHit>,
@@ -100,6 +102,7 @@ class Style(
         private fun snare(vararg steps: Int, v: Float = 0.9f) = steps.map { DrumHit(it, Drum.SNARE, v) }
         private fun shaker(vararg steps: Int, v: Float = 0.35f) = steps.map { DrumHit(it, Drum.SHAKER, v) }
         private fun rim(vararg steps: Int, v: Float = 0.6f) = steps.map { DrumHit(it, Drum.RIM, v) }
+        private fun crash(vararg steps: Int, v: Float = 0.7f) = steps.map { DrumHit(it, Drum.CRASH, v) }
 
         val WORSHIP_SLOW = Style(
             "worship_slow", "Worship Slow", 4, 4, 72, "4/4",
@@ -125,6 +128,18 @@ class Style(
             ),
             comp = listOf(CompHit(0, 3, Voicing.FULL, 0.8f), CompHit(4, 3, Voicing.UPPER, 0.6f), CompHit(6, 2, Voicing.UPPER, 0.5f), CompHit(8, 3, Voicing.FULL, 0.8f), CompHit(12, 3, Voicing.UPPER, 0.6f), CompHit(14, 2, Voicing.UPPER, 0.5f)),
         )
+        val POWER_ROCK = Style(
+            "power_rock", "Power Rock", 4, 4, 152, "4/4", compTone = PianoSynth.Tone.ORGAN,
+            drums = crash(0) + kick(0, 3, 6, 8, 11, 14) + snare(4, 12, v = 1f) + hat(0, 2, 4, 6, 8, 10, 12, 14, v = 0.75f) + hat(0, 4, 8, 12, v = 0.9f),
+            bass = listOf(
+                BassNote(0, BassDegree.ROOT, 2, 1f), BassNote(2, BassDegree.ROOT, 2, 0.85f), BassNote(4, BassDegree.ROOT, 2, 1f), BassNote(6, BassDegree.ROOT, 2, 0.85f),
+                BassNote(8, BassDegree.ROOT, 2, 1f), BassNote(10, BassDegree.OCTAVE, 2, 0.85f), BassNote(12, BassDegree.ROOT, 2, 1f), BassNote(14, BassDegree.FIFTH, 2, 0.85f),
+            ),
+            comp = listOf(
+                CompHit(0, 2, Voicing.POWER, 0.9f), CompHit(2, 2, Voicing.POWER, 0.7f), CompHit(4, 2, Voicing.POWER, 0.9f), CompHit(6, 2, Voicing.POWER, 0.7f),
+                CompHit(8, 2, Voicing.POWER, 0.9f), CompHit(10, 2, Voicing.POWER, 0.7f), CompHit(12, 2, Voicing.POWER, 0.9f), CompHit(14, 2, Voicing.POWER, 0.7f),
+            ),
+        )
         val POP_16 = Style(
             "pop_16", "Pop 16-Beat", 4, 4, 100, "4/4",
             drums = kick(0, 6, 8) + snare(4, 12) + (0 until 16).map { DrumHit(it, Drum.HAT, if (it % 4 == 0) 0.6f else if (it % 2 == 0) 0.4f else 0.25f) },
@@ -143,7 +158,7 @@ class Style(
             bass = listOf(BassNote(0, BassDegree.ROOT, 4), BassNote(4, BassDegree.FIFTH, 4, 0.6f), BassNote(8, BassDegree.FIFTH, 4, 0.6f)),
             comp = listOf(CompHit(4, 3, Voicing.UPPER, 0.6f), CompHit(8, 3, Voicing.UPPER, 0.6f)),
         )
-        val ALL = listOf(WORSHIP_SLOW, WORSHIP_68, ROCK_8, POP_16, GOSPEL_SHUFFLE, WALTZ)
+        val ALL = listOf(WORSHIP_SLOW, WORSHIP_68, ROCK_8, POWER_ROCK, POP_16, GOSPEL_SHUFFLE, WALTZ)
         fun byId(id: String?) = ALL.firstOrNull { it.id == id } ?: WORSHIP_SLOW
     }
 }

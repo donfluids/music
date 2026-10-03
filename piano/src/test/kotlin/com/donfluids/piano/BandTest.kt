@@ -115,6 +115,25 @@ class BandTest {
     }
 
     @Test
+    fun powerRockHasNoThirdAndHitsHarderThanRock() {
+        val c = BandChord(4, BandChord.Quality.MAJOR) // E
+        assertEquals(listOf(52, 59, 64), Accompaniment.voicing(c, Voicing.POWER))
+        fun loudness(style: Style): Double {
+            val band = Accompaniment(rate); band.style = style; band.bpm = style.defaultBpm
+            band.setChord(c); band.playing = true
+            run(band, 0.5)
+            return Audio.rms(run(band, 2.0))
+        }
+        assertTrue("power rock louder", loudness(Style.POWER_ROCK) > loudness(Style.ROCK_8) * 1.15)
+        // The comp carries no third: G# is far weaker than B in the mix.
+        val band = Accompaniment(rate); band.style = Style.POWER_ROCK; band.bpm = 152; band.setChord(c); band.playing = true
+        run(band, 0.5)
+        val x = run(band, 2.0)
+        fun hz(m: Int) = 440.0 * Math.pow(2.0, (m - 69) / 12.0)
+        assertTrue(Audio.power(x, hz(56), rate) < Audio.power(x, hz(59), rate) * 0.3)
+    }
+
+    @Test
     fun everyStyleRendersCleanly() {
         for (s in Style.ALL) {
             val band = Accompaniment(rate)

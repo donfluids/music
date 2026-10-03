@@ -12,7 +12,7 @@ class Accompaniment(private val sampleRate: Int) {
     val comp = PianoSynth(sampleRate, maxVoices = 12).also { it.tone = PianoSynth.Tone.ELECTRIC; it.volume = 1f }
 
     @Volatile var style: Style = Style.WORSHIP_SLOW
-        set(value) { field = value; restart = true }
+        set(value) { field = value; comp.tone = value.compTone; restart = true }
     @Volatile var bpm: Int = 72
     /** Overall band level, 0..1. */
     @Volatile var volume: Float = 0.8f
@@ -148,7 +148,7 @@ class Accompaniment(private val sampleRate: Int) {
         compNotes.forEach { comp.noteOff(it) }
         val c = chord ?: return
         compNotes.clear()
-        compNotes += voicing(c, Voicing.FULL)
+        compNotes += voicing(c, if (style.comp.all { it.voicing == Voicing.POWER }) Voicing.POWER else Voicing.FULL)
         compNotes.forEach { comp.noteOn(it, 0.6f) }
     }
 
@@ -178,6 +178,7 @@ class Accompaniment(private val sampleRate: Int) {
                 Voicing.ARP1 -> listOf(tones[1])
                 Voicing.ARP2 -> listOf(tones[2])
                 Voicing.ARP3 -> listOf(root + 12)
+                Voicing.POWER -> listOf(root, root + 7, root + 12) // root, fifth, octave: no third
             }
         }
     }
