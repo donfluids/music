@@ -43,8 +43,11 @@ class Settings(context: Context) {
     var bandVolume: Float
         get() = prefs.getFloat("bandVolume", 0.8f)
         set(v) = prefs.edit().putFloat("bandVolume", v).apply()
+    var autoStart: Boolean
+        get() = prefs.getBoolean("autoStart", true)
+        set(v) = prefs.edit().putBoolean("autoStart", v).apply()
     var followChords: Boolean
-        get() = prefs.getBoolean("followChords", false)
+        get() = prefs.getBoolean("followChords", true)
         set(v) = prefs.edit().putBoolean("followChords", v).apply()
     var bpm: Int
         get() = prefs.getInt("bpm", 100)

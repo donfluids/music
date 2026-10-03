@@ -134,6 +134,20 @@ class BandTest {
     }
 
     @Test
+    fun scheduledStartLandsOnTheInstant() {
+        val band = Accompaniment(rate)
+        band.style = Style.ROCK_8; band.bpm = 120
+        band.setChord(BandChord(0, BandChord.Quality.MAJOR))
+        band.startAt((0.5 * 1e9).toLong()) // half a second into the stream clock the test feeds
+        val x = run(band, 1.0)
+        val first = x.indexOfFirst { kotlin.math.abs(it) > 1e-3f }
+        assertTrue("first sound at ${first.toDouble() / rate} s", kotlin.math.abs(first - rate / 2) <= 2)
+        assertTrue(band.playing)
+        assertEquals(0L, band.startAtNanos)
+        assertEquals(1, band.beatIndex) // bar 1 beat 1 at 0.5 s, so beat 2 by 1.0 s at 120 BPM
+    }
+
+    @Test
     fun everyStyleRendersCleanly() {
         for (s in Style.ALL) {
             val band = Accompaniment(rate)

@@ -17,7 +17,14 @@ class Accompaniment(private val sampleRate: Int) {
     /** Overall band level, 0..1. */
     @Volatile var volume: Float = 0.8f
     @Volatile var playing: Boolean = false
-        set(value) { if (value && !field) restart = true; field = value; if (!value) stopNotes = true }
+        set(value) { if (value && !field) restart = true; field = value; if (!value) { stopNotes = true; startAtNanos = 0L } }
+
+    /** A start scheduled for a moment in the device's clock, so the band can enter on a downbeat. */
+    @Volatile var startAtNanos: Long = 0L
+        private set
+
+    /** Starts the band at [atNanos] (System.nanoTime() base), bar 1 beat 1 on that instant. */
+    fun startAt(atNanos: Long) { startAtNanos = atNanos }
 
     @Volatile private var pendingChord: BandChord? = null
     @Volatile private var chordChanged = false
@@ -71,15 +78,25 @@ class Accompaniment(private val sampleRate: Int) {
     /** Mixes the band into [out]; [nowNanos] is when the first sample reaches the device. */
     fun mix(out: FloatArray, frames: Int, nowNanos: Long) {
         if (stopNotes) { stopNotes = false; comp.allNotesOff(); bass.allNotesOff(); compNotes.clear(); bassNote = -1 }
+        var done = 0
         if (!playing) {
-            // Let the last notes ring out after a stop.
-            renderInto(out, 0, frames)
-            return
+            val at = startAtNanos
+            val offset = if (at > 0L) ((at - nowNanos) / 1e9 * sampleRate).toLong() else Long.MAX_VALUE
+            if (offset >= frames) {
+                // Not yet (or not scheduled): let the last notes ring out.
+                renderInto(out, 0, frames)
+                return
+            }
+            // The scheduled instant falls inside this block: silence up to it, then bar 1 beat 1.
+            val skip = offset.coerceAtLeast(0L).toInt()
+            renderInto(out, 0, skip)
+            done = skip
+            startAtNanos = 0L
+            playing = true
         }
         if (restart) { restart = false; samplePos = 0.0; nextEvent = 0; beatIndex = -1; barCount = 0; comp.allNotesOff(); bass.allNotesOff(); compNotes.clear(); bassNote = -1 }
         if (eventsForStyle !== style || eventsForBpm != bpm) { rebuildEvents(); nextEvent = events.indexOfFirst { it.sample >= samplePos }.let { if (it < 0) events.size else it } }
         val barSamples = stepSamples() * style.stepsPerBar
-        var done = 0
         while (done < frames) {
             if (chordChanged) {
                 chordChanged = false

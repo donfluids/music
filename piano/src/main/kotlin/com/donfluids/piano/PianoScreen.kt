@@ -129,6 +129,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     val listener = remember { SongListener(context.applicationContext) }
     var listening by remember { mutableStateOf(false) }
     var followChords by remember { mutableStateOf(settings.followChords) }
+    var autoStart by remember { mutableStateOf(settings.autoStart) }
+    var entering by remember { mutableStateOf(false) }
     var matchedStyle by remember { mutableStateOf<Style?>(null) }
     val heard by listener.result.collectAsStateWithLifecycle()
     val micError by listener.error.collectAsStateWithLifecycle()
@@ -186,13 +188,23 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             bpm = m.bpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
             m.scale?.let { scale = it; settings.scale = it }
             m.chord?.let { bandChord = it; output()?.band?.setChord(it) }
+            if (autoStart && !bandPlaying) {
+                // Enter on the singers' next downbeat, in their time.
+                val at = SongMatcher.nextDownbeatNanos(heard, System.nanoTime())
+                output()?.band?.let { b -> if (at != null) b.startAt(at) else b.playing = true }
+                output()?.metronome?.enabled = false
+                entering = at != null
+                bandPlaying = true
+            }
         }
+        if (entering && output()?.band?.startAtNanos == 0L) entering = false
         if (followChords && bandOn && bandPlaying) {
-            // The band follows the chord the analyser hears, by its underlying triad.
+            // The band follows the chord the analyser hears, by its underlying triad, but only
+            // chords that belong to the key; a stray reading is ignored.
             heard.currentChord?.let { c ->
                 val q = if (c.minor) BandChord.Quality.MINOR else BandChord.Quality.MAJOR
                 val next = BandChord(c.root, q)
-                if (next != bandChord) { bandChord = next; output()?.band?.setChord(next) }
+                if (next != bandChord && SongMatcher.followable(next, scale)) { bandChord = next; output()?.band?.setChord(next) }
             }
         }
     }
@@ -241,6 +253,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                     Text(
                         when {
                             !listening -> stringResource(R.string.listen)
+                            matchedStyle != null && entering -> stringResource(R.string.listen_starting, matchedStyle!!.name)
                             matchedStyle != null -> "→ ${matchedStyle!!.name}"
                             heard.bpm != null -> "${heard.key?.name ?: "–"} · ${heard.bpm!!.roundToIntSafe()} · ${heard.meterLabel ?: "–"}"
                             else -> stringResource(R.string.listening)
@@ -344,6 +357,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.note_names), showNames) { showNames = it; settings.showNames = it }
                 SettingRow(stringResource(R.string.reverb), reverb) { reverb = it; settings.reverb = it; output()?.reverb?.enabled = it }
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
+                SettingRow(stringResource(R.string.auto_start), autoStart) { autoStart = it; settings.autoStart = it }
                 SettingRow(stringResource(R.string.follow_chords), followChords) { followChords = it; settings.followChords = it }
                 Text(stringResource(R.string.volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
                 Slider(value = volume, onValueChange = { volume = it; synth()?.volume = it }, onValueChangeFinished = { settings.volume = volume })

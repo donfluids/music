@@ -34,6 +34,31 @@ class SongMatcherTest {
     }
 
     @Test
+    fun nextDownbeatFollowsTheAnalysersGrid() {
+        val period = 500_000_000L // 120 BPM
+        // Last beat at 10.0 s was beat index 1 of a four-beat bar: the downbeat is three beats on, at 11.5 s.
+        val a = AnalysisResult(bpm = 120f, beatPeriodMillis = 500f, lastBeatAtNanos = 10_000_000_000L, beatsPerBar = 4, lastBeatIndexInBar = 1)
+        assertEquals(11_500_000_000L, SongMatcher.nextDownbeatNanos(a, nowNanos = 10_100_000_000L))
+        // Too close to now: step a whole bar forward.
+        assertEquals(13_500_000_000L, SongMatcher.nextDownbeatNanos(a, nowNanos = 11_400_000_000L))
+        // On the downbeat itself, the next one is a bar later.
+        val onOne = AnalysisResult(bpm = 120f, beatPeriodMillis = 500f, lastBeatAtNanos = 10_000_000_000L, beatsPerBar = 4, lastBeatIndexInBar = 0)
+        assertEquals(12_000_000_000L, SongMatcher.nextDownbeatNanos(onOne, nowNanos = 10_000_000_000L))
+        assertNull(SongMatcher.nextDownbeatNanos(AnalysisResult(), 0L))
+        assertEquals(4 * period, 2_000_000_000L)
+    }
+
+    @Test
+    fun followsOnlyChordsInTheKey() {
+        val g = Theory.Scale(7, minor = false)
+        assertEquals(true, SongMatcher.followable(BandChord(0, BandChord.Quality.MAJOR), g))   // C
+        assertEquals(true, SongMatcher.followable(BandChord(4, BandChord.Quality.MINOR), g))   // Em
+        assertEquals(false, SongMatcher.followable(BandChord(5, BandChord.Quality.MAJOR), g))  // F has no place in G
+        assertEquals(false, SongMatcher.followable(BandChord(4, BandChord.Quality.MAJOR), g))  // E major has G#
+        assertEquals(true, SongMatcher.followable(BandChord(5, BandChord.Quality.MAJOR), null))
+    }
+
+    @Test
     fun waitsUntilSure() {
         assertNull(SongMatcher.match(AnalysisResult()))
         assertNull(SongMatcher.match(heard(100f, "4/4", locked = false)))

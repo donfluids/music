@@ -34,9 +34,12 @@ and installs as its own app (`com.donfluids.piano`).
   the microphone, reads the key, tempo and time signature, and as soon as it is sure it picks
   the style that fits (compound time to Worship 6/8, three to Waltz, a slow four to Worship
   Slow, medium to Pop, driving to 8-Beat Rock, fast to Power Rock), sets the tempo and key,
-  and arms the band on the tonic chord. Press a chord or play to start. With "Band follows the
-  chords it hears" on in settings, the band keeps changing chord with the singing while it
-  plays. Note that once the band is playing, the microphone hears the band too.
+  and, with "Band starts by itself on the next downbeat" on (the default), enters on the
+  singers' next downbeat in their time. With "Band follows the chords it hears" on (also the
+  default) it keeps changing chord with the singing, ignoring any heard chord that does not
+  belong to the key. Turn either off in settings to start by hand or hold the chord yourself.
+  The band keeps its own tempo once it has entered; if the singers drift, stop and listen
+  again. Once the band plays, the microphone hears the band too.
 - The gear opens settings: sustain, note names, room (a light reverb), tick (a haptic tap on
   each key) and volume. Everything is remembered between launches.
 - Audio stops when the app leaves the foreground.
