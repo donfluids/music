@@ -20,5 +20,11 @@
     <string name="band_off">Off</string>
     <string name="band_volume">Band volume</string>
     <string name="band_toggle">Start or stop the band</string>
+    <string name="listen">Listen</string>
+    <string name="listening">Listening…</string>
+    <string name="listen_hint">Listening to the song to pick a style. Sing or play a few bars.</string>
+    <string name="listen_matched">%1$s · %2$d bpm · %3$s</string>
+    <string name="follow_chords">Band follows the chords it hears</string>
+    <string name="mic_denied">Microphone permission is needed to listen to the song.</string>
     <string name="band_hint">Keys below middle C set the chord: one key for major, add the black key below for minor, the white key below for a seventh, or play the chord.</string>
 </resources>

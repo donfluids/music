@@ -30,6 +30,13 @@ and installs as its own app (`com.donfluids.piano`).
   bass and electric piano) starts on the first chord, or from the play button in the pill,
   and follows the shared tempo. The keys above middle C play as usual over it, and the scale
   chord buttons set the band's chord too. Band volume is in settings.
+- **Listen**: tap the ear and sing or play a few bars. The piano runs LiveKey's analyser on
+  the microphone, reads the key, tempo and time signature, and as soon as it is sure it picks
+  the style that fits (compound time to Worship 6/8, three to Waltz, a slow four to Worship
+  Slow, medium to Pop, driving to 8-Beat Rock, fast to Power Rock), sets the tempo and key,
+  and arms the band on the tonic chord. Press a chord or play to start. With "Band follows the
+  chords it hears" on in settings, the band keeps changing chord with the singing while it
+  plays. Note that once the band is playing, the microphone hears the band too.
 - The gear opens settings: sustain, note names, room (a light reverb), tick (a haptic tap on
   each key) and volume. Everything is remembered between launches.
 - Audio stops when the app leaves the foreground.

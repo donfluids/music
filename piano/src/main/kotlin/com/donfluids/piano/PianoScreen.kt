@@ -1,6 +1,14 @@
 package com.donfluids.piano
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.donfluids.music.dsp.AnalysisResult
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.tween
@@ -117,6 +125,13 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var bandVolume by remember { mutableStateOf(settings.bandVolume) }
     var bandChord by remember { mutableStateOf<BandChord?>(null) }
     val splitMidi = 60
+    val context = LocalContext.current
+    val listener = remember { SongListener(context.applicationContext) }
+    var listening by remember { mutableStateOf(false) }
+    var followChords by remember { mutableStateOf(settings.followChords) }
+    var matchedStyle by remember { mutableStateOf<Style?>(null) }
+    val heard by listener.result.collectAsStateWithLifecycle()
+    val micError by listener.error.collectAsStateWithLifecycle()
     val visibleWhite = 14
     val synth: () -> PianoSynth? = { output()?.synth }
     val chordHeld = remember { mutableStateMapOf<Int, List<Int>>() }
@@ -142,8 +157,46 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     val view = LocalView.current
     DisposableEffect(Unit) {
         view.keepScreenOn = true
-        onDispose { view.keepScreenOn = false; output()?.metronome?.enabled = false; output()?.band?.playing = false }
+        onDispose { view.keepScreenOn = false; output()?.metronome?.enabled = false; output()?.band?.playing = false; listener.stop() }
     }
+    val micDenied = stringResource(R.string.mic_denied)
+    var micMessage by remember { mutableStateOf<String?>(null) }
+    fun startListening() {
+        listener.start(withBand = bandPlaying)
+        listening = listener.running
+        matchedStyle = null
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startListening() else micMessage = micDenied
+    }
+    fun toggleListening() {
+        if (listening) { listener.stop(); listening = false; return }
+        micMessage = null
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (granted) startListening() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    // Apply the match once, when the analyser is first sure; chord-following keeps running.
+    LaunchedEffect(heard, listening) {
+        if (!listening) return@LaunchedEffect
+        val m = SongMatcher.match(heard)
+        if (m != null && matchedStyle == null) {
+            matchedStyle = m.style
+            bandOn = true; settings.bandOn = true
+            bandStyle = m.style; settings.bandStyle = m.style; output()?.band?.style = m.style
+            bpm = m.bpm; settings.bpm = bpm; output()?.band?.bpm = bpm; output()?.metronome?.bpm = bpm
+            m.scale?.let { scale = it; settings.scale = it }
+            m.chord?.let { bandChord = it; output()?.band?.setChord(it) }
+        }
+        if (followChords && bandOn && bandPlaying) {
+            // The band follows the chord the analyser hears, by its underlying triad.
+            heard.currentChord?.let { c ->
+                val q = if (c.minor) BandChord.Quality.MINOR else BandChord.Quality.MAJOR
+                val next = BandChord(c.root, q)
+                if (next != bandChord) { bandChord = next; output()?.band?.setChord(next) }
+            }
+        }
+    }
+
 
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -182,6 +235,22 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer, selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer),
             )
             FilterChip(
+                selected = listening,
+                onClick = { toggleListening() },
+                label = {
+                    Text(
+                        when {
+                            !listening -> stringResource(R.string.listen)
+                            matchedStyle != null -> "→ ${matchedStyle!!.name}"
+                            heard.bpm != null -> "${heard.key?.name ?: "–"} · ${heard.bpm!!.roundToIntSafe()} · ${heard.meterLabel ?: "–"}"
+                            else -> stringResource(R.string.listening)
+                        },
+                    )
+                },
+                leadingIcon = { EarIcon(if (listening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, if (listening) heard.level else 0f) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer, selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer),
+            )
+            FilterChip(
                 selected = bandOn,
                 onClick = { bandDialog = true },
                 label = { Text(if (bandOn) bandStyle.name else stringResource(R.string.band)) },
@@ -205,7 +274,10 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 GearIcon(MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (error != null) Text(error, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
+        (error ?: micError ?: micMessage)?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium) }
+        if (listening && matchedStyle == null) {
+            Text(stringResource(R.string.listen_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
 
         // Chord row sits directly above the keys so the eye drops from chord to notes.
         if (bandOn || scale != null) {
@@ -272,6 +344,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.note_names), showNames) { showNames = it; settings.showNames = it }
                 SettingRow(stringResource(R.string.reverb), reverb) { reverb = it; settings.reverb = it; output()?.reverb?.enabled = it }
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
+                SettingRow(stringResource(R.string.follow_chords), followChords) { followChords = it; settings.followChords = it }
                 Text(stringResource(R.string.volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
                 Slider(value = volume, onValueChange = { volume = it; synth()?.volume = it }, onValueChangeFinished = { settings.volume = volume })
                 Text(stringResource(R.string.band_volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
@@ -286,6 +359,18 @@ private fun SettingRow(label: String, value: Boolean, onChange: (Boolean) -> Uni
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Switch(checked = value, onCheckedChange = onChange)
+    }
+}
+
+private fun Float.roundToIntSafe() = Math.round(this)
+
+/** A small ear-like arc that swells with the input level while listening. */
+@Composable
+private fun EarIcon(colour: Color, level: Float) {
+    Canvas(Modifier.size(18.dp)) {
+        val r = size.minDimension / 2
+        drawCircle(colour, radius = r * (0.35f + 0.25f * level), center = center)
+        drawCircle(colour, radius = r * 0.75f, center = center, style = Stroke(1.5.dp.toPx()))
     }
 }
 
