@@ -51,11 +51,13 @@ object RelativeKeyResolver {
      * so a last note counts as a resting note only once silence has followed it.
      *
      * Evidence from a few notes is weak, so the note and profile terms grow with the amount
-     * heard; a G# or an E major chord is telling at any time and is not scaled.
+     * heard; a G# or an E major chord is telling at any time and is not scaled. [sigma] is the
+     * singer's spread in semitones: a note between two keys counts partly as each.
      */
     fun evidence(
         key: Key, notes: List<SungNote>, chroma: FloatArray?, segments: List<ChordSegment>,
         heardSeconds: Double = Double.POSITIVE_INFINITY, nowSeconds: Double = Double.POSITIVE_INFINITY,
+        sigma: Double = 0.0,
     ): Evidence {
         val (major, minor) = pair(key)
         val M = major.tonic
@@ -63,11 +65,11 @@ object RelativeKeyResolver {
         val material = if (notes.isNotEmpty()) notes.sumOf { it.durationSeconds } else heardSeconds
         val amount = (material / FULL_EVIDENCE_SECONDS).coerceIn(0.0, 1.0)
         return Evidence(
-            endings = amount * endings(notes, M, m, nowSeconds),
-            leadingTone = leadingTone(notes, chroma, M, m),
+            endings = amount * endings(notes, M, m, nowSeconds, sigma),
+            leadingTone = leadingTone(notes, chroma, M, m, sigma),
             approaches = amount * approaches(notes, M, m, nowSeconds),
             chords = chords(segments, M, m),
-            profile = amount * profile(notes, chroma, major, minor),
+            profile = amount * profile(notes, chroma, major, minor, sigma),
             prior = PRIOR_MAJOR,
         )
     }
@@ -90,32 +92,35 @@ object RelativeKeyResolver {
         return out
     }
 
-    private fun endings(notes: List<SungNote>, M: Int, m: Int, nowSeconds: Double): Double {
+    private fun endings(notes: List<SungNote>, M: Int, m: Int, nowSeconds: Double, sigma: Double): Double {
         val resting = restingNotes(notes, nowSeconds)
         if (resting.isEmpty()) return 0.0
         var sum = 0.0
         var weight = 0.0
         for ((n, w) in resting) {
             weight += w
-            sum += w * when (pc(n)) {
-                M -> 1.0
-                m -> -1.0
-                Math.floorMod(M + 7, 12) -> 0.3   // the major's fifth: a half cadence
-                Math.floorMod(M + 4, 12) -> -0.15 // the minor's fifth, but also the major's third
-                else -> 0.0
+            for ((p, share) in softShares(n.pitch, sigma)) {
+                sum += w * share * when (p) {
+                    M -> 1.0
+                    m -> -1.0
+                    Math.floorMod(M + 7, 12) -> 0.3   // the major's fifth: a half cadence
+                    Math.floorMod(M + 4, 12) -> -0.15 // the minor's fifth, but also the major's third
+                    else -> 0.0
+                }
             }
         }
         return 2.0 * sum / weight
     }
 
-    private fun leadingTone(notes: List<SungNote>, chroma: FloatArray?, M: Int, m: Int): Double {
+    private fun leadingTone(notes: List<SungNote>, chroma: FloatArray?, M: Int, m: Int, sigma: Double): Double {
         val raised = Math.floorMod(M + 8, 12)
         if (notes.isNotEmpty()) {
             var count = 0.0
             for ((i, n) in notes.withIndex()) {
-                if (pc(n) != raised) continue
+                // A G sung sharp is only partly a G#.
+                val share = softShares(n.pitch, sigma).firstOrNull { it.first == raised }?.second ?: continue
                 // Resolving up to the minor's tonic is the textbook use; any G# still counts.
-                count += if (notes.getOrNull(i + 1)?.let { pc(it) == m } == true) 1.0 else 0.5
+                count += share * if (notes.getOrNull(i + 1)?.let { pc(it) == m } == true) 1.0 else 0.5
             }
             return -(1.2 * count).coerceAtMost(2.5)
         }
@@ -188,9 +193,9 @@ object RelativeKeyResolver {
         return (share + dominant + cadences).coerceIn(-2.5, 2.5)
     }
 
-    private fun profile(notes: List<SungNote>, chroma: FloatArray?, major: Key, minor: Key): Double {
+    private fun profile(notes: List<SungNote>, chroma: FloatArray?, major: Key, minor: Key, sigma: Double): Double {
         if (notes.size >= 8) {
-            val ranked = MelodicKeyFinder.rank(notes)
+            val ranked = MelodicKeyFinder.rank(notes, sigma = sigma)
             val a = ranked.firstOrNull { it.key == major }?.score ?: return 0.0
             val b = ranked.firstOrNull { it.key == minor }?.score ?: return 0.0
             return (5.0 * (a - b)).coerceIn(-1.2, 1.2)
@@ -219,8 +224,9 @@ class RelativeModeTracker(private val threshold: Double = RelativeKeyResolver.TH
     /**
      * Returns the key to show: the decision, or the lean when undecided. The lean has its own
      * small dead band so an undecided display does not swap between the pair on every note.
+     * [threshold] is raised for a scattered singer, whose evidence is weaker.
      */
-    fun update(key: Key, score: Double): Key {
+    fun update(key: Key, score: Double, threshold: Double = this.threshold): Key {
         val (major, minor) = RelativeKeyResolver.pair(key)
         if (major != pairMajor) { pairMajor = major; decided = null; lean = null }
         this.score = score

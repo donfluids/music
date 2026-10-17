@@ -74,7 +74,7 @@ class MelodyKeyTest {
         )
         assertEquals(Key(9, Mode.MINOR), MelodicKeyFinder.rank(notes)[0].key)
         // Same notes, phrases ending on C with C longest: C major.
-        val cNotes = notes.map { if (it.midi == 69) it.copy(midi = 72) else it }
+        val cNotes = notes.map { if (it.midi == 69) it.copy(pitch = 72.0) else it }
         assertEquals(Key(0, Mode.MAJOR), MelodicKeyFinder.rank(cNotes)[0].key)
     }
 

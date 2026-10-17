@@ -16,6 +16,7 @@
     <string name="sub_in_threes">in 3s</string>
     <string name="sub_held">held</string>
     <string name="sub_or_relative">%1$s · or %2$s</string>
+    <string name="sub_best_guess">%1$s · best guess</string>
     <string name="idle_hint">Tap Listen and let the song play for a few bars.</string>
     <string name="stopped_last_result">Stopped · last result</string>
     <string name="listening">Listening</string>
@@ -28,6 +29,10 @@
     <string name="hint_notes_suggest">the notes suggest %1$s</string>
     <string name="hint_chords_suggest">the chords suggest %1$s</string>
     <string name="hint_major_or_minor">%1$s or %2$s: same notes, listening for which is home</string>
+    <string name="hint_best_guess">still listening: the key is a best guess</string>
+    <string name="hint_best_guess_scattered">notes scattered about %1$d cents: the key is a best guess</string>
+    <string name="hint_drift_sharp">singers have drifted %1$d cents sharp: nearer %2$s on the keyboard</string>
+    <string name="hint_drift_flat">singers have drifted %1$d cents flat: nearer %2$s on the keyboard</string>
     <string name="hint_tuning_sharp">singing %1$d cents sharp, between two keys</string>
     <string name="hint_tuning_flat">singing %1$d cents flat, between two keys</string>
     <string name="transpose">Transpose</string>
