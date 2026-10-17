@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.donfluids.music.dsp.AnalysisResult
+import com.donfluids.music.dsp.RelativeKeyResolver
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.tween
@@ -298,7 +299,10 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                         when {
                             !listening -> stringResource(R.string.listen)
                             lockedKey != null -> lockedKey!!.label
-                            heard.displayKey != null || heard.key != null -> (heard.displayKey ?: heard.key)!!.label
+                            heard.displayKey != null || heard.key != null -> (heard.displayKey ?: heard.key)!!.let { k ->
+                                // Until the singing shows which of the pair is home, name both.
+                                if (heard.modeDecided) k.label else "${k.label} / ${k.relative.label}"
+                            }
                             else -> stringResource(R.string.listening)
                         },
                     )
@@ -450,7 +454,13 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
     val shown = heard.displayKey ?: heard.key ?: return
     val settled = SongMatcher.keySettled(heard, KEY_SETTLE_SECONDS)
     val leaderScore = heard.keyScore.coerceAtLeast(0.05f)
-    val candidates = listOf(shown to 1f) + heard.keyAlternatives.take(2).map { (k, sc) -> k to (sc / leaderScore).coerceIn(0f, 1f) }
+    val others = heard.keyAlternatives.map { (k, sc) -> k to (sc / leaderScore).coerceIn(0f, 1f) }
+    // While major or minor is undecided, the relative key always sits beside the leader,
+    // its bar showing how close the call is.
+    val relative = shown.relative
+    val closeness = (1f - kotlin.math.abs(heard.modeScore) / (2f * RelativeKeyResolver.THRESHOLD.toFloat())).coerceIn(0.3f, 1f)
+    val candidates = if (heard.modeDecided) listOf(shown to 1f) + others.take(2)
+    else listOf(shown to 1f, relative to (others.firstOrNull { it.first == relative }?.second ?: closeness)) + others.filter { it.first != relative }.take(1)
     val progress = if (locked != null) 1f else (heard.keyHeldSeconds / KEY_SETTLE_SECONDS).coerceIn(0f, 1f)
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -464,6 +474,7 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
                 when {
                     locked != null -> "${locked.label} · ${stringResource(R.string.key_locked)}"
                     settled -> "${shown.label} · ${stringResource(R.string.key_settled)}"
+                    !heard.modeDecided -> "${shown.label} ${stringResource(R.string.or_relative)} ${relative.label}…"
                     else -> "${stringResource(R.string.zoning_in)} ${shown.label}…"
                 },
                 style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,

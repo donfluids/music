@@ -112,4 +112,30 @@ class MelodyKeyTest {
         assertTrue("held ${r.keyHeldSeconds} s", r.keyHeldSeconds > 0.5f)
         assertTrue("score ${r.keyScore}", r.keyScore > 0.3f)
     }
+
+    private fun analyse(audio: FloatArray): AnalysisResult {
+        val analyzer = MusicAnalyzer(rate, AnalysisPreset.VOICES)
+        var i = 0
+        while (i < audio.size) {
+            val n = minOf(1024, audio.size - i)
+            analyzer.process(audio.copyOfRange(i, i + n), n, ((i + n).toDouble() / rate * 1e9).toLong())
+            i += n
+        }
+        return analyzer.result
+    }
+
+    @Test
+    fun relativeMajorAndMinorAreToldApartFromTheSinging() {
+        // The same white notes, twice: once resting on C, once resting on A with a G# before it.
+        val inC = listOf(60 to .4, 62 to .4, 64 to .4, 65 to .4, 67 to .8, 69 to .4, 67 to .4, 65 to .4, 64 to .4, 62 to .4, 60 to 1.2)
+        val inA = listOf(69 to .4, 71 to .4, 72 to .4, 74 to .4, 76 to .8, 74 to .4, 72 to .4, 71 to .4, 68 to .4, 71 to .4, 69 to 1.2)
+        val c = analyse(sing(inC + inC, offsetCents = 0.0, gapAfter = setOf(4, 10, 15)))
+        val a = analyse(sing(inA + inA, offsetCents = 0.0, gapAfter = setOf(4, 10, 15)))
+        println("C tune: ${c.key?.label} decided=${c.modeDecided} score=${c.modeScore}; A tune: ${a.key?.label} decided=${a.modeDecided} score=${a.modeScore}")
+        assertEquals(Key(0, Mode.MAJOR), c.key)
+        assertTrue("C decided, score ${c.modeScore}", c.modeDecided)
+        assertEquals(Key(9, Mode.MINOR), a.key)
+        assertTrue("A decided, score ${a.modeScore}", a.modeDecided)
+        assertEquals(Key(0, Mode.MAJOR), a.relativeKey)
+    }
 }

@@ -18,6 +18,15 @@ data class AnalysisResult(
     val recentChroma: List<Float> = List(12) { 0f },
     val key: Key? = null,
     val keyConfidence: Float = 0f,
+    /** The other key of [key]'s pair: its relative minor or major, which uses the same notes. */
+    val relativeKey: Key? = null,
+    /**
+     * False while the singing has not shown which of the pair is home; [key] is then only the
+     * lean, and the screen should offer both.
+     */
+    val modeDecided: Boolean = false,
+    /** The major-or-minor score: positive leans to the major of the pair, negative to the minor. */
+    val modeScore: Float = 0f,
     /** How long [key] has been the shown key without changing. */
     val keyHeldSeconds: Float = 0f,
     /** The shown key's own fit (correlation with its profile), for comparing against [keyAlternatives]. */
@@ -184,6 +193,8 @@ class MusicAnalyzer(
         pendingKeyConfidence = 0f
         pendingKeyScore = 0f
         shownKeySince = 0.0
+        modeTracker.reset()
+        heldIdentity = null
         pendingAlternatives = emptyList()
         shownMeterIndex = 0
         shownAnchorShift = 0.0
@@ -278,6 +289,8 @@ class MusicAnalyzer(
     private var pendingKeyConfidence = 0f
     private var pendingKeyScore = 0f
     private var shownKeySince = 0.0
+    private val modeTracker = RelativeModeTracker()
+    private var heldIdentity: Pair<Key, Key?>? = null
     private var pendingAlternatives: List<Pair<Key, Float>> = emptyList()
 
     /** Tracks the sung pitch on the singer's own grid and segments it into notes. */
@@ -292,9 +305,20 @@ class MusicAnalyzer(
     }
 
     private fun updateKey() {
-        val before = pendingKey
         updateKeyInner()
-        if (pendingKey != before) shownKeySince = hopIndex * hopSeconds
+        // The finders settle the pair of keys (the seven notes); which of the pair is home is
+        // decided separately, from where phrases rest, the leading tone, cadence approaches
+        // and chords.
+        val found = pendingKey
+        if (found != null) {
+            val notes = if (pitchTracker != null) segmenter.snapshot() else emptyList()
+            val now = hopIndex * hopSeconds
+            val evidence = RelativeKeyResolver.evidence(found, notes, chromaExtractor.accumulatedChroma, currentSegments(), heardSeconds = now, nowSeconds = now)
+            pendingKey = modeTracker.update(found, evidence.total)
+        }
+        // The held time restarts when the pair or the decision changes, not when an undecided lean wobbles.
+        val identity = pendingKey?.let { RelativeKeyResolver.pair(it).first to modeTracker.decided }
+        if (identity != heldIdentity) { heldIdentity = identity; shownKeySince = hopIndex * hopSeconds }
     }
 
     private fun updateKeyInner() {
@@ -438,6 +462,9 @@ class MusicAnalyzer(
             .sortedByDescending { it.second }
     }
 
+    private fun samePair(a: Key?, b: Key?): Boolean =
+        a != null && b != null && RelativeKeyResolver.pair(a).first == RelativeKeyResolver.pair(b).first
+
     private var tempo: TempoTracker.Estimate? = null
 
     private fun updateRhythm() {
@@ -515,6 +542,9 @@ class MusicAnalyzer(
             lastBeatAt = anchor + (beatsSinceAnchor * countedPeriodNanos).toLong()
         }
         val beatIndex = if (m != null) Math.floorMod(shownMeterIndex + beatsSinceAnchor, m.beatsPerBar.toLong()).toInt() else 0
+        // Chords outrank the notes only when they point at a different pair of keys.
+        val chordsOverride = displayFromChords && !samePair(songKey, pendingKey)
+        val shownDisplay = if (chordsOverride) songKey else pendingKey
         result = AnalysisResult(
             secondsHeard = (hopIndex * hopSeconds).toFloat(),
             level = level,
@@ -524,6 +554,9 @@ class MusicAnalyzer(
             keyConfidence = pendingKeyConfidence,
             keyHeldSeconds = if (pendingKey != null) (hopIndex * hopSeconds - shownKeySince).toFloat() else 0f,
             keyScore = pendingKeyScore,
+            relativeKey = shownDisplay?.relative,
+            modeDecided = chordsOverride || modeTracker.decided != null,
+            modeScore = modeTracker.score.toFloat(),
             keyAlternatives = pendingAlternatives,
             tuningCents = chromaExtractor.tuningOffsetCents().toFloat(),
             tuningConfidence = chromaExtractor.tuningConfidence().toFloat(),
@@ -540,9 +573,9 @@ class MusicAnalyzer(
             meterConfidence = m?.confidence?.toFloat() ?: 0f,
             lastBeatIndexInBar = beatIndex,
             meterScores = m?.scores?.mapValues { it.value.toFloat() } ?: emptyMap(),
-            displayKey = if (displayFromChords) songKey else pendingKey,
-            displayKeyConfidence = if (displayFromChords) songKeyConfidence else pendingKeyConfidence,
-            displayKeyFromChords = displayFromChords,
+            displayKey = shownDisplay,
+            displayKeyConfidence = if (chordsOverride) songKeyConfidence else pendingKeyConfidence,
+            displayKeyFromChords = chordsOverride,
             currentChord = currentChord,
             provisionalChord = chordTracker.provisional,
             chordSegments = currentSegments(),

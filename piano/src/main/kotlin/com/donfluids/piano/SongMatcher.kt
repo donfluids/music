@@ -32,9 +32,12 @@ object SongMatcher {
 
     data class Match(val style: Style, val bpm: Int, val scale: Theory.Scale?, val chord: BandChord?, val reason: String)
 
-    /** The heard key has stopped moving: shown unchanged for [settleSeconds] with some confidence. */
+    /**
+     * The heard key has stopped moving: shown unchanged for [settleSeconds] with some confidence,
+     * and the singing has shown whether the major or its relative minor is home.
+     */
     fun keySettled(a: AnalysisResult, settleSeconds: Int): Boolean =
-        (a.displayKey ?: a.key) != null && a.keyHeldSeconds >= settleSeconds && a.keyConfidence >= 0.25f
+        (a.displayKey ?: a.key) != null && a.modeDecided && a.keyHeldSeconds >= settleSeconds && a.keyConfidence >= 0.25f
 
     /**
      * A sung song with no steady pulse: the key is in but the tempo never locks. After

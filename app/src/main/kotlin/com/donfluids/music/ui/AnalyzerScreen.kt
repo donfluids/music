@@ -110,6 +110,8 @@ private class Shown(
     val key: Key?,
     val keyConfidence: Float,
     val keyHeld: Boolean,
+    /** Null once the singing has shown which is home; otherwise the relative key, transposed. */
+    val orRelative: Key?,
     /** The chord sounding now, transposed. */
     val chord: ChordLabel?,
     val transpose: Int,
@@ -125,6 +127,7 @@ private fun shown(s: UiState): Shown {
         key = base?.transposed(s.transpose),
         keyConfidence = a.displayKeyConfidence,
         keyHeld = s.heldKey != null,
+        orRelative = if (s.heldKey == null && !a.modeDecided) base?.relative?.transposed(s.transpose) else null,
         chord = a.currentChord?.transposed(s.transpose),
         transpose = s.transpose,
         nashville = s.nashville,
@@ -432,6 +435,7 @@ private fun KeyAndChordRow(sh: Shown) {
             value = sh.key?.name ?: "–",
             sub = when {
                 sh.keyHeld && sh.key != null -> sh.key.mode.label + " · " + stringResource(R.string.sub_held)
+                sh.key != null && sh.orRelative != null -> stringResource(R.string.sub_or_relative, sh.key.mode.label, sh.orRelative.label)
                 sh.key != null -> sh.key.mode.label
                 else -> null
             },
@@ -540,6 +544,9 @@ private fun HintLines(sh: Shown, a: AnalysisResult) {
         if (!sh.keyHeld && other != null) {
             val name = other.transposed(sh.transpose).label
             add(if (a.displayKeyFromChords) stringResource(R.string.hint_notes_suggest, name) else stringResource(R.string.hint_chords_suggest, name))
+        }
+        if (sh.key != null && sh.orRelative != null && a.secondsHeard >= 4f) {
+            add(stringResource(R.string.hint_major_or_minor, sh.key.label, sh.orRelative.label))
         }
         val cents = a.tuningCents.roundToInt()
         if (a.tuningConfidence >= 0.2f && abs(cents) >= 25) {
