@@ -43,7 +43,8 @@ class ClipReplayTest {
                         "${labels.optString("key", "?")} / ${labels.optString("tempo", "?")} / ${labels.optString("meter", "?")} | " +
                         "${r.key?.label ?: "-"} (${"%.2f".format(r.keyConfidence)}) / " +
                         "${r.bpm?.let { "%.0f".format(it) } ?: "-"} / ${r.meterLabel ?: "-"} (${"%.2f".format(r.meterConfidence)}) | " +
-                        "${"%+.0f".format(r.tuningCents)}c",
+                        "${"%+.0f".format(r.tuningCents)}c" +
+                        (if (r.keyFromMelody) " | melody ${r.sungNotes.size} notes" else ""),
                 )
             }
         }

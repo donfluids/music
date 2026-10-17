@@ -33,7 +33,16 @@ class ChromaExtractor(
     private val maxHz: Double = 3000.0,
     /** Peaks above this frequency are weighted down in proportion, to tame high overtones. */
     private val rollOffHz: Double = 1000.0,
+    /**
+     * Follow the singers' own reference: once the tuning estimate is consistent and clearly
+     * off the grid, move the grid onto it so notes fall into one pitch class instead of two.
+     */
+    private val adaptiveTuning: Boolean = true,
 ) {
+    /** Cents by which the pitch-class grid has been moved from [referenceHz]. */
+    var gridOffsetCents: Double = 0.0
+        private set
+    private var framesSinceGridMove = 0
     /** Samples the caller must provide before the analysis point. */
     val windowSamples: Int get() = maxOf(fftSize, bassFftSize)
 
@@ -89,13 +98,23 @@ class ChromaExtractor(
         tuningX = 0.0
         tuningY = 0.0
         accumulatedWeight = 0.0
+        gridOffsetCents = 0.0
+        framesSinceGridMove = 0
+    }
+
+    /** Tuning offset of the music relative to the current grid, in cents (-50..50). */
+    private fun offsetFromGridCents(): Double {
+        val r = sqrt(tuningX * tuningX + tuningY * tuningY)
+        if (r < 1e-9) return 0.0
+        return atan2(tuningY, tuningX) / (2.0 * Math.PI) * 100.0
     }
 
     /** Estimated tuning offset relative to [referenceHz], in cents (-50..50). Positive is sharp. */
     fun tuningOffsetCents(): Double {
-        val r = sqrt(tuningX * tuningX + tuningY * tuningY)
-        if (r < 1e-9) return 0.0
-        return atan2(tuningY, tuningX) / (2.0 * Math.PI) * 100.0
+        var c = gridOffsetCents + offsetFromGridCents()
+        while (c > 50.0) c -= 100.0
+        while (c < -50.0) c += 100.0
+        return c
     }
 
     /** How consistent the tuning estimate is, 0..1. */
@@ -124,6 +143,21 @@ class ChromaExtractor(
         tuningX = tuningX * decay + frameX
         tuningY = tuningY * decay + frameY
         accumulatedWeight = accumulatedWeight * decay + frameWeight
+        framesSinceGridMove++
+        // Move the grid onto the singers when they are consistently more than 15 cents off it,
+        // no more often than every two seconds, so the pitch classes settle rather than hunt.
+        if (adaptiveTuning && framesSinceGridMove * hopSeconds > 2.0 && tuningConfidence() > 0.5) {
+            val off = offsetFromGridCents()
+            if (kotlin.math.abs(off) > 15.0) {
+                gridOffsetCents += off
+                while (gridOffsetCents > 50.0) gridOffsetCents -= 100.0
+                while (gridOffsetCents < -50.0) gridOffsetCents += 100.0
+                // The tuning vector was measured against the old grid; re-express it against the new one.
+                val r = sqrt(tuningX * tuningX + tuningY * tuningY)
+                tuningX = r; tuningY = 0.0
+                framesSinceGridMove = 0
+            }
+        }
     }
 
     private fun collectPeaks(s: Spectrum, fromHz: Double, toHz: Double) {
@@ -142,7 +176,7 @@ class ChromaExtractor(
             val delta = if (denom.isFinite() && denom != 0f) (0.5f * (a - c) / denom).coerceIn(-0.5f, 0.5f) else 0f
             val hz = (k + delta) * s.binHz
             if (hz < fromHz || hz >= toHz) continue
-            val semitone = 12.0 * log2(hz / referenceHz)
+            val semitone = 12.0 * log2(hz / referenceHz) - gridOffsetCents / 100.0
             val nearest = semitone.roundToInt()
             val cents = (semitone - nearest) * 100.0
             val pc = Math.floorMod(nearest + 9, 12)

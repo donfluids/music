@@ -27,6 +27,8 @@ data class AnalysisPreset(
     val tempoPriorWidthOctaves: Double,
     /** Beats needed before a time signature is shown. */
     val meterMinBeats: Int,
+    /** Find the key from the sung melody (pitch-tracked notes) rather than from chroma alone. */
+    val melodicKey: Boolean = false,
 ) {
     companion object {
         /** Drums, guitar, keys and voices through a monitor. Kick and snare drive the beat. */
@@ -66,6 +68,7 @@ data class AnalysisPreset(
             keyMemorySeconds = 10.0,
             tempoPriorCenterBpm = 120.0, tempoPriorWidthOctaves = 0.55,
             meterMinBeats = 12,
+            melodicKey = true,
         )
 
         val ALL = listOf(BAND, GUITAR, VOICES)
