@@ -1,5 +1,7 @@
 package com.donfluids.music.dsp
 
+import kotlin.math.PI
+
 import kotlin.math.log2
 import kotlin.math.sqrt
 
@@ -58,41 +60,199 @@ class PitchTracker(
     }
 }
 
-/** A sung note: MIDI number on the singer's own grid, start time and duration. */
-data class SungNote(val midi: Int, val startSeconds: Double, val durationSeconds: Double)
+/**
+ * A sung note on the singer's own grid. [pitch] is where the note actually sat, fractional
+ * (60.3 is 30 cents above middle C), after the singer's offset and drift are removed; [midi]
+ * is the nearest semitone, derived from it so the two can never disagree.
+ */
+data class SungNote(val pitch: Double, val startSeconds: Double, val durationSeconds: Double) {
+    /** A note sung exactly on a semitone. */
+    constructor(midi: Int, startSeconds: Double, durationSeconds: Double) : this(midi.toDouble(), startSeconds, durationSeconds)
+
+    val midi: Int get() = Math.round(pitch).toInt()
+}
 
 /**
- * Turns a stream of pitch readings into notes: a run of frames within half a semitone of
- * each other that lasts at least [minNoteSeconds]. Slides between notes are dropped.
+ * How a pitch splits between the semitones either side of it, given the singer's spread
+ * [sigma] in semitones: a note 45 cents above C is mostly C and partly C#, not a full vote
+ * for either. With [sigma] near zero this is plain rounding. Returns (pitch class, share) pairs.
  */
-class NoteSegmenter(private val minNoteSeconds: Double = 0.12, private val gapSeconds: Double = 0.08) {
+fun softShares(pitch: Double, sigma: Double): List<Pair<Int, Double>> {
+    if (sigma < 0.05) return listOf(Math.floorMod(Math.round(pitch).toInt(), 12) to 1.0)
+    val lo = kotlin.math.floor(pitch).toInt()
+    val ws = (lo - 1..lo + 2).map { k -> k to kotlin.math.exp(-(pitch - k) * (pitch - k) / (2 * sigma * sigma)) }
+    val total = ws.sumOf { it.second }
+    return ws.filter { it.second / total > 0.01 }.map { (k, w) -> Math.floorMod(k, 12) to w / total }
+}
+
+/**
+ * Turns a stream of pitch readings into notes. A note continues while the pitch stays within
+ * [holdSemitones] of the note's running centre, so vibrato and a note sung between two keys
+ * do not break it up. Each reading is weighted by how still the pitch is over about one
+ * vibrato cycle: held pitch counts, a slide or scoop counts for little. A run that is mostly
+ * slide is dropped.
+ */
+class NoteSegmenter(
+    private val minNoteSeconds: Double = 0.12,
+    private val gapSeconds: Double = 0.08,
+    private val holdSemitones: Double = 0.6,
+    private val steadyWindowSeconds: Double = 0.2,
+    private val minSteadyShare: Double = 0.25,
+) {
     val notes = ArrayList<SungNote>()
-    private var runMidi = 0
+    /** Called with each note as it closes, for the singer model. */
+    var onNote: ((SungNote) -> Unit)? = null
+
     private var runStart = -1.0
     private var runEnd = -1.0
-    private var runSum = 0.0
-    private var runCount = 0
+    private var runWeightedSum = 0.0
+    private var runWeight = 0.0
+    private var runFrames = 0
+    private var runSteadyFrames = 0
+    private var runPlainSum = 0.0
+    private val history = ArrayDeque<Pair<Double, Double>>()
 
-    fun reset() { notes.clear(); runStart = -1.0; runCount = 0 }
+    fun reset() { notes.clear(); runStart = -1.0; history.clear() }
+
+    private fun runCentre(): Double = if (runWeight > 0.2) runWeightedSum / runWeight else runPlainSum / runFrames
 
     /** [midi] is fractional, already on the singer's grid; pass NaN for an unvoiced frame. */
     fun push(midi: Double, timeSeconds: Double) {
-        if (midi.isNaN()) { if (runStart >= 0 && timeSeconds - runEnd > gapSeconds) close(); return }
-        val rounded = Math.round(midi).toInt()
-        if (runStart >= 0 && (rounded != runMidi || timeSeconds - runEnd > gapSeconds)) close()
-        if (runStart < 0) { runMidi = rounded; runStart = timeSeconds; runSum = 0.0; runCount = 0 }
-        runEnd = timeSeconds; runSum += midi; runCount++
+        if (midi.isNaN()) {
+            history.clear()
+            if (runStart >= 0 && timeSeconds - runEnd > gapSeconds) close()
+            return
+        }
+        // Steadiness: how far the pitch has moved over the last vibrato cycle. Vibrato returns
+        // to where it was; a slide does not.
+        history.addLast(timeSeconds to midi)
+        while (history.size > 1 && timeSeconds - history.first().first > steadyWindowSeconds + 1e-6) history.removeFirst()
+        val moved = if (history.size > 1 && timeSeconds - history.first().first >= steadyWindowSeconds * 0.75) kotlin.math.abs(midi - history.first().second) else 0.0
+        val steadiness = 1.0 / (1.0 + (moved / 0.3) * (moved / 0.3))
+
+        if (runStart >= 0) {
+            val away = kotlin.math.abs(midi - runCentre())
+            if (away > holdSemitones || timeSeconds - runEnd > gapSeconds) close()
+        }
+        if (runStart < 0) {
+            runStart = timeSeconds; runWeightedSum = 0.0; runWeight = 0.0; runFrames = 0; runSteadyFrames = 0; runPlainSum = 0.0
+        }
+        runEnd = timeSeconds
+        runWeightedSum += midi * steadiness; runWeight += steadiness
+        runPlainSum += midi; runFrames++
+        if (steadiness > 0.5) runSteadyFrames++
+    }
+
+    private fun openNote(): SungNote? {
+        if (runStart < 0 || runEnd - runStart < minNoteSeconds) return null
+        if (runSteadyFrames < minSteadyShare * runFrames) return null
+        val centre = runCentre()
+        return SungNote(centre, runStart, runEnd - runStart)
     }
 
     fun close() {
-        if (runStart >= 0 && runEnd - runStart >= minNoteSeconds) notes += SungNote(runMidi, runStart, runEnd - runStart)
+        openNote()?.let { notes += it; onNote?.invoke(it) }
         runStart = -1.0
     }
 
     /** The closed notes plus the note still being sung, if it is already long enough to count. */
     fun snapshot(): List<SungNote> {
-        if (runStart < 0 || runEnd - runStart < minNoteSeconds) return notes.toList()
-        return notes + SungNote(runMidi, runStart, runEnd - runStart)
+        val open = openNote() ?: return notes.toList()
+        return notes + open
+    }
+}
+
+/**
+ * What the app learns about the singer, one note at a time.
+ *
+ * Offset: where the singer's "in tune" sits, in cents from A = 440 Hz. Each note's distance
+ * from its nearest semitone wraps around every 100 cents, like an angle, so the offset is a
+ * circular average: notes consistently 45 cents sharp all point the same way and move the
+ * grid to meet them; notes scattered at random point every way and average to nothing.
+ * Older notes fade over [memorySeconds], so a slow drift flat or sharp is followed. How
+ * strongly the grid moves depends on how consistent the notes are (the mean resultant
+ * length, 0 to 1), counting only what exceeds the consistency random notes show by chance.
+ *
+ * Spread: how far notes scatter around the grid once the offset is removed, in cents. A few
+ * cents for a good singer, 25 or more for a poor one. It sets how softly notes are assigned
+ * and how much evidence a decision needs.
+ */
+class SingerModel(private val memorySeconds: Double = 8.0) {
+    var offsetCents = 0.0
+        private set
+    /**
+     * Where the singer sits now, in cents from A = 440 Hz: the grid plus whatever consistent
+     * lean the recent notes still show. The grid itself moves cautiously; this is for display.
+     */
+    var currentCents = 0.0
+        private set
+    private var sumCos = 0.0
+    private var sumSin = 0.0
+    private var sumWeight = 0.0
+    private var sumWeightSq = 0.0
+    private var lastUpdate = Double.NaN
+    private val residuals = ArrayList<Pair<Double, Double>>() // |cents from grid|, weight
+    var notesSeen = 0
+        private set
+
+    /**
+     * Spread in cents: the weighted median distance from the grid, scaled to match a standard
+     * deviation (x1.48). The median ignores the odd glitch that would inflate a mean. A middling
+     * 20 until a few notes are in.
+     */
+    val spreadCents: Double
+        get() {
+            if (residuals.size < 4) return 20.0
+            val sorted = residuals.sortedBy { it.first }
+            val half = sorted.sumOf { it.second } / 2
+            var acc = 0.0
+            for ((r, w) in sorted) { acc += w; if (acc >= half) return 1.4826 * r }
+            return 1.4826 * sorted.last().first
+        }
+
+    /** The soft-assignment width in semitones for this singer. */
+    val sigmaSemitones: Double get() = (spreadCents / 100.0).coerceIn(0.1, 0.35)
+
+    /**
+     * [note] was segmented on the grid shifted by the offset at the time; its leftover distance
+     * from the nearest semitone is what the offset (and the spread) learn from.
+     */
+    fun observe(note: SungNote) {
+        val residual = (note.pitch - Math.round(note.pitch)) * 100.0
+        val t = note.startSeconds + note.durationSeconds
+        if (!lastUpdate.isNaN()) {
+            val fade = kotlin.math.exp(-(t - lastUpdate).coerceAtLeast(0.0) / memorySeconds)
+            sumCos *= fade; sumSin *= fade; sumWeight *= fade; sumWeightSq *= fade * fade
+        }
+        lastUpdate = t
+        val w = note.durationSeconds.coerceIn(0.1, 1.5)
+        val angle = 2 * PI * residual / 100.0
+        sumCos += w * kotlin.math.cos(angle); sumSin += w * kotlin.math.sin(angle); sumWeight += w; sumWeightSq += w * w
+        residuals += kotlin.math.abs(residual) to note.durationSeconds.coerceAtMost(1.5)
+        notesSeen++
+        // A few notes' worth of evidence before the grid moves at all.
+        if (sumWeight < 1.0) return
+        val resultant = kotlin.math.sqrt(sumCos * sumCos + sumSin * sumSin) / sumWeight
+        val meanCents = kotlin.math.atan2(sumSin, sumCos) * 100.0 / (2 * PI)
+        // Even random notes line up a little by chance, about 1/sqrt(n) for n notes; only the
+        // consistency beyond that counts, so a scattered singer does not walk the grid away.
+        val chance = kotlin.math.sqrt(sumWeightSq) / sumWeight
+        val excess = ((resultant - chance) / (1 - chance)).coerceIn(0.0, 1.0)
+        // Consistent notes move the grid most of the way; scattered ones barely at all.
+        val step = 0.8 * excess * excess * meanCents
+        offsetCents += step
+        currentCents = offsetCents + (1 - 0.8 * excess) * excess * meanCents
+        // The remembered notes are now that much nearer the grid: turn their average to match.
+        val turn = -2 * PI * step / 100.0
+        val c = kotlin.math.cos(turn); val s = kotlin.math.sin(turn)
+        val nc = sumCos * c - sumSin * s
+        sumSin = sumCos * s + sumSin * c
+        sumCos = nc
+    }
+
+    fun reset() {
+        offsetCents = 0.0; currentCents = 0.0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
+        residuals.clear(); notesSeen = 0
     }
 }
 
@@ -107,7 +267,8 @@ object MelodicKeyFinder {
 
     data class Candidate(val key: com.donfluids.music.music.Key, val score: Double)
 
-    fun rank(notes: List<SungNote>, phraseGapSeconds: Double = 0.4): List<Candidate> {
+    /** [sigma] is the singer's spread in semitones: notes between two keys share their weight. */
+    fun rank(notes: List<SungNote>, phraseGapSeconds: Double = 0.4, sigma: Double = 0.0): List<Candidate> {
         if (notes.isEmpty()) return emptyList()
         val weight = DoubleArray(12)
         val longest = notes.maxByOrNull { it.durationSeconds }!!
@@ -117,7 +278,7 @@ object MelodicKeyFinder {
             val phraseEnd = next == null || next.startSeconds - (n.startSeconds + n.durationSeconds) > phraseGapSeconds
             if (phraseEnd) w += 0.6
             if (n === longest) w += 0.4
-            weight[Math.floorMod(n.midi, 12)] += w
+            for ((pc, share) in softShares(n.pitch, sigma)) weight[pc] += w * share
         }
         val mean = weight.average()
         var vx = 0.0; for (v in weight) vx += (v - mean) * (v - mean)

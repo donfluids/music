@@ -31,6 +31,7 @@
     <string name="zoning_in">Zoning in on</string>
     <string name="key_settled">settled</string>
     <string name="or_relative">or</string>
+    <string name="best_guess">Best guess</string>
     <string name="key_locked">locked</string>
     <string name="tap_to_lock">tap a key to lock it</string>
     <string name="speaker_hint">This phone cannot cancel its own speaker. Chords follow best with headphones, or with the phone nearer you than the speaker.</string>

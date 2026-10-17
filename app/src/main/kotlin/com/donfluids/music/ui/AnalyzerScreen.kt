@@ -112,6 +112,8 @@ private class Shown(
     val keyHeld: Boolean,
     /** Null once the singing has shown which is home; otherwise the relative key, transposed. */
     val orRelative: Key?,
+    /** The singing does not yet point clearly to one key: what is shown is a best guess. */
+    val bestGuess: Boolean,
     /** The chord sounding now, transposed. */
     val chord: ChordLabel?,
     val transpose: Int,
@@ -127,7 +129,8 @@ private fun shown(s: UiState): Shown {
         key = base?.transposed(s.transpose),
         keyConfidence = a.displayKeyConfidence,
         keyHeld = s.heldKey != null,
-        orRelative = if (s.heldKey == null && !a.modeDecided) base?.relative?.transposed(s.transpose) else null,
+        orRelative = if (s.heldKey == null && a.pairDecided && !a.modeDecided) base?.relative?.transposed(s.transpose) else null,
+        bestGuess = s.heldKey == null && base != null && !a.pairDecided,
         chord = a.currentChord?.transposed(s.transpose),
         transpose = s.transpose,
         nashville = s.nashville,
@@ -435,6 +438,7 @@ private fun KeyAndChordRow(sh: Shown) {
             value = sh.key?.name ?: "–",
             sub = when {
                 sh.keyHeld && sh.key != null -> sh.key.mode.label + " · " + stringResource(R.string.sub_held)
+                sh.key != null && sh.bestGuess -> stringResource(R.string.sub_best_guess, sh.key.mode.label)
                 sh.key != null && sh.orRelative != null -> stringResource(R.string.sub_or_relative, sh.key.mode.label, sh.orRelative.label)
                 sh.key != null -> sh.key.mode.label
                 else -> null
@@ -548,9 +552,18 @@ private fun HintLines(sh: Shown, a: AnalysisResult) {
         if (sh.key != null && sh.orRelative != null && a.secondsHeard >= 4f) {
             add(stringResource(R.string.hint_major_or_minor, sh.key.label, sh.orRelative.label))
         }
+        if (sh.key != null && sh.bestGuess && a.secondsHeard >= 4f) {
+            val spread = a.singerSpreadCents.roundToInt()
+            add(if (spread >= 25) stringResource(R.string.hint_best_guess_scattered, spread) else stringResource(R.string.hint_best_guess))
+        }
         val cents = a.tuningCents.roundToInt()
-        if (a.tuningConfidence >= 0.2f && abs(cents) >= 25) {
-            add(if (cents > 0) stringResource(R.string.hint_tuning_sharp, cents) else stringResource(R.string.hint_tuning_flat, -cents))
+        val nearer = sh.key?.transposed((cents / 100.0).roundToInt())
+        when {
+            // Drifted most of a semitone: the keyboard's nearest key has changed.
+            abs(cents) > 50 && nearer != null && nearer != sh.key ->
+                add(if (cents > 0) stringResource(R.string.hint_drift_sharp, cents, nearer.label) else stringResource(R.string.hint_drift_flat, -cents, nearer.label))
+            a.tuningConfidence >= 0.2f && abs(cents) >= 25 ->
+                add(if (cents > 0) stringResource(R.string.hint_tuning_sharp, cents) else stringResource(R.string.hint_tuning_flat, -cents))
         }
     }
     if (lines.isEmpty()) return

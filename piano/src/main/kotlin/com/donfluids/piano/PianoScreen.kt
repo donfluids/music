@@ -301,7 +301,11 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                             lockedKey != null -> lockedKey!!.label
                             heard.displayKey != null || heard.key != null -> (heard.displayKey ?: heard.key)!!.let { k ->
                                 // Until the singing shows which of the pair is home, name both.
-                                if (heard.modeDecided) k.label else "${k.label} / ${k.relative.label}"
+                                when {
+                                    !heard.pairDecided -> "${k.label}?"
+                                    heard.modeDecided -> k.label
+                                    else -> "${k.label} / ${k.relative.label}"
+                                }
                             }
                             else -> stringResource(R.string.listening)
                         },
@@ -459,7 +463,7 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
     // its bar showing how close the call is.
     val relative = shown.relative
     val closeness = (1f - kotlin.math.abs(heard.modeScore) / (2f * RelativeKeyResolver.THRESHOLD.toFloat())).coerceIn(0.3f, 1f)
-    val candidates = if (heard.modeDecided) listOf(shown to 1f) + others.take(2)
+    val candidates = if (heard.modeDecided || !heard.pairDecided) listOf(shown to 1f) + others.take(2)
     else listOf(shown to 1f, relative to (others.firstOrNull { it.first == relative }?.second ?: closeness)) + others.filter { it.first != relative }.take(1)
     val progress = if (locked != null) 1f else (heard.keyHeldSeconds / KEY_SETTLE_SECONDS).coerceIn(0f, 1f)
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -474,6 +478,7 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
                 when {
                     locked != null -> "${locked.label} · ${stringResource(R.string.key_locked)}"
                     settled -> "${shown.label} · ${stringResource(R.string.key_settled)}"
+                    !heard.pairDecided -> "${stringResource(R.string.best_guess)} ${shown.label}…"
                     !heard.modeDecided -> "${shown.label} ${stringResource(R.string.or_relative)} ${relative.label}…"
                     else -> "${stringResource(R.string.zoning_in)} ${shown.label}…"
                 },

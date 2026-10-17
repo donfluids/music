@@ -25,6 +25,11 @@ data class AnalysisResult(
      * lean, and the screen should offer both.
      */
     val modeDecided: Boolean = false,
+    /**
+     * False while the singing does not clearly point to one pair of keys (a scattered or
+     * drifting singer): [key] is then a best guess. Always true without a tracked melody.
+     */
+    val pairDecided: Boolean = false,
     /** The major-or-minor score: positive leans to the major of the pair, negative to the minor. */
     val modeScore: Float = 0f,
     /** How long [key] has been the shown key without changing. */
@@ -33,11 +38,16 @@ data class AnalysisResult(
     val keyScore: Float = 0f,
     /** The next best guesses, best first. */
     val keyAlternatives: List<Pair<Key, Float>> = emptyList(),
-    /** Cents sharp (+) or flat (-) of A4 = 440 Hz. */
+    /**
+     * Cents sharp (+) or flat (-) of A4 = 440 Hz. For a tracked melody this follows the
+     * singers as they drift, and may pass 50 when they have drifted most of a semitone.
+     */
     val tuningCents: Float = 0f,
     val tuningConfidence: Float = 0f,
     /** Notes sung so far, on the singer's grid, when the preset tracks the melody. */
     val sungNotes: List<SungNote> = emptyList(),
+    /** How far the singer's notes scatter around the grid, in cents: a few for a good singer, 25+ for a poor one. */
+    val singerSpreadCents: Float = 0f,
     /** True when the shown key came from the melody rather than from chroma. */
     val keyFromMelody: Boolean = false,
     val bpm: Float? = null,
@@ -108,7 +118,8 @@ class MusicAnalyzer(
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
     private val chordTracker = ChordTracker()
     private val pitchTracker = if (preset.melodicKey) PitchTracker(sampleRate) else null
-    private val segmenter = NoteSegmenter()
+    private val singer = SingerModel()
+    private val segmenter = NoteSegmenter().also { seg -> seg.onNote = { singer.observe(it) } }
     private var keyFromMelody = false
 
     private val windowSize = chromaExtractor.windowSamples
@@ -195,6 +206,8 @@ class MusicAnalyzer(
         shownKeySince = 0.0
         modeTracker.reset()
         heldIdentity = null
+        pairOk = false
+        singer.reset()
         pendingAlternatives = emptyList()
         shownMeterIndex = 0
         shownAnchorShift = 0.0
@@ -290,6 +303,7 @@ class MusicAnalyzer(
     private var pendingKeyScore = 0f
     private var shownKeySince = 0.0
     private val modeTracker = RelativeModeTracker()
+    private var pairOk = false
     private var heldIdentity: Pair<Key, Key?>? = null
     private var pendingAlternatives: List<Pair<Key, Float>> = emptyList()
 
@@ -298,7 +312,8 @@ class MusicAnalyzer(
         val tracker = pitchTracker ?: return
         val now = hopIndex * hopSeconds
         if (tracker.process(window, windowSize)) {
-            segmenter.push(tracker.midi - chromaExtractor.gridOffsetCents / 100.0, now)
+            // On the singer's own grid, which follows them as they drift.
+            segmenter.push(tracker.midi - singer.offsetCents / 100.0, now)
         } else {
             segmenter.push(Double.NaN, now)
         }
@@ -313,8 +328,15 @@ class MusicAnalyzer(
         if (found != null) {
             val notes = if (pitchTracker != null) segmenter.snapshot() else emptyList()
             val now = hopIndex * hopSeconds
-            val evidence = RelativeKeyResolver.evidence(found, notes, chromaExtractor.accumulatedChroma, currentSegments(), heardSeconds = now, nowSeconds = now)
-            pendingKey = modeTracker.update(found, evidence.total)
+            val sigma = if (pitchTracker != null) singer.sigmaSemitones else 0.0
+            // A lone voice's overtones read as chords (a sung E looks like an E major chord), so
+            // with a tracked melody the chord evidence is left out: the notes speak for themselves.
+            val chords = if (pitchTracker != null) emptyList() else currentSegments()
+            val evidence = RelativeKeyResolver.evidence(found, notes, chromaExtractor.accumulatedChroma, chords, heardSeconds = now, nowSeconds = now, sigma = sigma)
+            pendingKey = modeTracker.update(found, evidence.total, RelativeKeyResolver.THRESHOLD * evidenceNeeded())
+            pairOk = pitchTracker == null || pairIsClear(notes)
+            // A scattered singer gives weaker evidence: the shown confidence says so.
+            pendingKeyConfidence *= (1.0 / evidenceNeeded()).toFloat()
         }
         // The held time restarts when the pair or the decision changes, not when an undecided lean wobbles.
         val identity = pendingKey?.let { RelativeKeyResolver.pair(it).first to modeTracker.decided }
@@ -326,7 +348,7 @@ class MusicAnalyzer(
         // breaks ties. Its evidence (phrase endings, the longest note) is what a listener uses.
         if (pitchTracker != null) {
             val notes = segmenter.snapshot()
-            val melodic = if (notes.size >= 8) MelodicKeyFinder.rank(notes) else emptyList()
+            val melodic = if (notes.size >= 8) MelodicKeyFinder.rank(notes, sigma = singer.sigmaSemitones) else emptyList()
             if (melodic.size >= 2) {
                 val best = melodic[0]
                 val margin = ((best.score - melodic[1].score) * 4.0).coerceIn(0.0, 1.0)
@@ -462,6 +484,36 @@ class MusicAnalyzer(
             .sortedByDescending { it.second }
     }
 
+    /**
+     * How much more evidence than usual a decision needs, from the singer's spread: 1 for a
+     * singer within about 20 cents, rising to 2 for one scattering 40 cents or more.
+     */
+    private fun evidenceNeeded(): Double {
+        if (pitchTracker == null || singer.notesSeen < 4) return 1.0
+        return (1.0 + (singer.spreadCents - 20.0) / 20.0).coerceIn(1.0, 2.0)
+    }
+
+    /**
+     * Whether the sung notes clearly point to one pair of keys. Two tests, both scaled to the
+     * singer: the leading pair must beat the next pair by a margin that grows with the
+     * singer's scatter, and the latest notes must agree with the ones before them. A drift
+     * the app failed to follow, or a singer too scattered to read, fails one or the other.
+     */
+    private fun pairIsClear(notes: List<SungNote>): Boolean {
+        if (notes.size < 16) return false
+        val sigma = singer.sigmaSemitones
+        val ranked = MelodicKeyFinder.rank(notes, sigma = sigma)
+        if (ranked.isEmpty()) return false
+        val bestPair = RelativeKeyResolver.pair(ranked[0].key).first
+        val other = ranked.firstOrNull { RelativeKeyResolver.pair(it.key).first != bestPair } ?: return false
+        val need = 0.05 + 0.006 * (singer.spreadCents - 10.0).coerceAtLeast(0.0)
+        if (ranked[0].score - other.score < need) return false
+        val n = minOf(16, notes.size / 2)
+        val recent = MelodicKeyFinder.rank(notes.subList(notes.size - n, notes.size), sigma = sigma).firstOrNull()?.key ?: return false
+        val before = MelodicKeyFinder.rank(notes.subList(notes.size - 2 * n, notes.size - n), sigma = sigma).firstOrNull()?.key ?: return false
+        return RelativeKeyResolver.pair(recent).first == bestPair && RelativeKeyResolver.pair(before).first == bestPair
+    }
+
     private fun samePair(a: Key?, b: Key?): Boolean =
         a != null && b != null && RelativeKeyResolver.pair(a).first == RelativeKeyResolver.pair(b).first
 
@@ -542,8 +594,9 @@ class MusicAnalyzer(
             lastBeatAt = anchor + (beatsSinceAnchor * countedPeriodNanos).toLong()
         }
         val beatIndex = if (m != null) Math.floorMod(shownMeterIndex + beatsSinceAnchor, m.beatsPerBar.toLong()).toInt() else 0
-        // Chords outrank the notes only when they point at a different pair of keys.
-        val chordsOverride = displayFromChords && !samePair(songKey, pendingKey)
+        // Chords outrank the notes only when they point at a different pair of keys, and never
+        // over a tracked melody, where the "chords" may be one voice's overtones.
+        val chordsOverride = displayFromChords && pitchTracker == null && !samePair(songKey, pendingKey)
         val shownDisplay = if (chordsOverride) songKey else pendingKey
         result = AnalysisResult(
             secondsHeard = (hopIndex * hopSeconds).toFloat(),
@@ -555,10 +608,12 @@ class MusicAnalyzer(
             keyHeldSeconds = if (pendingKey != null) (hopIndex * hopSeconds - shownKeySince).toFloat() else 0f,
             keyScore = pendingKeyScore,
             relativeKey = shownDisplay?.relative,
-            modeDecided = chordsOverride || modeTracker.decided != null,
+            pairDecided = chordsOverride || pairOk,
+            modeDecided = chordsOverride || (pairOk && modeTracker.decided != null),
             modeScore = modeTracker.score.toFloat(),
             keyAlternatives = pendingAlternatives,
-            tuningCents = chromaExtractor.tuningOffsetCents().toFloat(),
+            tuningCents = if (pitchTracker != null && singer.notesSeen >= 4) singer.currentCents.toFloat() else chromaExtractor.tuningOffsetCents().toFloat(),
+            singerSpreadCents = if (pitchTracker != null && singer.notesSeen >= 4) singer.spreadCents.toFloat() else 0f,
             tuningConfidence = chromaExtractor.tuningConfidence().toFloat(),
             sungNotes = if (pitchTracker != null) segmenter.snapshot() else emptyList(),
             keyFromMelody = keyFromMelody,
