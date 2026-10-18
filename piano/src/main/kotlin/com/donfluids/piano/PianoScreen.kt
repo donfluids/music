@@ -118,6 +118,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var volume by remember { mutableStateOf(settings.volume) }
     var reverb by remember { mutableStateOf(settings.reverb) }
     var haptics by remember { mutableStateOf(settings.haptics) }
+    var boost by remember { mutableStateOf(settings.boost) }
     var scaleDialog by remember { mutableStateOf(false) }
     var tempoDialog by remember { mutableStateOf(false) }
     var settingsSheet by remember { mutableStateOf(false) }
@@ -418,6 +419,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 SettingRow(stringResource(R.string.sustain), sustain) { sustain = it; settings.sustain = it; synth()?.sustain = it }
                 SettingRow(stringResource(R.string.note_names), showNames) { showNames = it; settings.showNames = it }
                 SettingRow(stringResource(R.string.reverb), reverb) { reverb = it; settings.reverb = it; output()?.reverb?.enabled = it }
+                SettingRow(stringResource(R.string.boost), boost) { boost = it; settings.boost = it; output()?.boost = it }
                 SettingRow(stringResource(R.string.haptics), haptics) { haptics = it; settings.haptics = it }
                 SettingRow(stringResource(R.string.fills), fills) { fills = it; settings.fills = it; output()?.band?.fillsOnChordChange = it }
                 SettingRow(stringResource(R.string.follow_chords), followChords) { followChords = it; settings.followChords = it }

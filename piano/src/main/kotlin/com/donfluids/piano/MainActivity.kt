@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
             it.synth.sustain = settings.sustain
             it.synth.volume = settings.volume
             it.reverb.enabled = settings.reverb
+            it.boost = settings.boost
             it.metronome.bpm = settings.bpm
             it.band.style = settings.bandStyle
             it.band.bpm = settings.bpm

@@ -1,5 +1,7 @@
 package com.donfluids.piano
 
+import kotlin.math.tanh
+
 /**
  * The band: plays a [Style] for the current [chord] at [bpm], mixing synthesised drums, a
  * bass and an electric-piano comp into the audio stream. Events are triggered on the exact
@@ -156,7 +158,10 @@ class Accompaniment(private val sampleRate: Int) {
         val before = out.copyOfRange(offset, offset + frames)
         java.util.Arrays.fill(out, offset, offset + frames, 0f)
         drums.render(out, offset, frames)
-        for (k in 0 until frames) out[offset + k] = before[k] + out[offset + k] * 0.8f * v
+        // Drum hits peak far above their body. A gentle saturation rounds off just the first
+        // instant of each hit, so the master limiter does not have to pull the whole band down on
+        // every kick (which would pump); the overtones it adds help a kick on a small speaker.
+        for (k in 0 until frames) out[offset + k] = before[k] + DRUM_KNEE * tanh(out[offset + k] * 0.8f / DRUM_KNEE).toFloat() * v
     }
 
     private fun fire(e: Event, atNanos: Long) {
@@ -207,6 +212,9 @@ class Accompaniment(private val sampleRate: Int) {
     }
 
     companion object {
+        /** Drum level above which hits are rounded off. */
+        const val DRUM_KNEE = 0.35f
+
         /** Bass lives in the octave below middle C's octave: roots E1 to Eb2 region. */
         fun bassMidi(c: BandChord, degree: BassDegree): Int {
             val root = 36 + Math.floorMod(c.root - 4, 12) + 4 // 40 (E2) .. 51 (Eb3)

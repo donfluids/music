@@ -32,6 +32,7 @@
     <string name="key_settled">settled</string>
     <string name="or_relative">or</string>
     <string name="best_guess">Best guess</string>
+    <string name="boost">Extra loud (may distort on some phones)</string>
     <string name="now_key">now %1$s</string>
     <string name="now_settled">moved to %1$s</string>
     <string name="now_rising">rising, now %1$s</string>

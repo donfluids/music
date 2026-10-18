@@ -31,6 +31,10 @@ class Settings(context: Context) {
     var reverb: Boolean
         get() = prefs.getBoolean("reverb", true)
         set(v) = prefs.edit().putBoolean("reverb", v).apply()
+    /** Extra loudness through Android's loudness enhancer; may distort on some phones. */
+    var boost: Boolean
+        get() = prefs.getBoolean("boost", false)
+        set(v) = prefs.edit().putBoolean("boost", v).apply()
     var haptics: Boolean
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
