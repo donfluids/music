@@ -219,7 +219,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         if (bandEntering && output()?.band?.startAtNanos == 0L) bandEntering = false
         if (!bandPlaying) {
             // Four times a second, name the chord the melody implies within the key.
-            val k = heard.displayKey ?: heard.key
+            // The sung chord belongs to the key the singers are in now, which may have wandered from the centre.
+            val k = heard.keyNow ?: heard.displayKey ?: heard.key
             val sc = lockedKey ?: k?.let { Theory.Scale(it.tonic, it.mode == com.donfluids.music.music.Mode.MINOR) }
             if (sc != null && heard.secondsHeard - lastHeardChordAt >= 0.25f) {
                 lastHeardChordAt = heard.secondsHeard
@@ -296,11 +297,14 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                             lockedKey != null -> lockedKey!!.label
                             heard.displayKey != null || heard.key != null -> (heard.displayKey ?: heard.key)!!.let { k ->
                                 // Until the singing shows which of the pair is home, name both.
-                                when {
+                                val centre = when {
                                     !heard.pairDecided -> "${k.label}?"
                                     heard.modeDecided -> k.label
                                     else -> "${k.label} / ${k.relative.label}"
                                 }
+                                // Singers who have wandered: the centre, and where they are now.
+                                val now = heard.keyNow
+                                if (now != null && now != k) "$centre · ${stringResource(R.string.now_key, now.name)}" else centre
                             }
                             else -> stringResource(R.string.listening)
                         },
@@ -476,7 +480,7 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
                     !heard.pairDecided -> "${stringResource(R.string.best_guess)} ${shown.label}…"
                     !heard.modeDecided -> "${shown.label} ${stringResource(R.string.or_relative)} ${relative.label}…"
                     else -> "${stringResource(R.string.zoning_in)} ${shown.label}…"
-                },
+                } + wanderNote(heard, shown),
                 style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
                 color = if (settled || locked != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
@@ -500,6 +504,21 @@ private fun KeySettling(heard: com.donfluids.music.dsp.AnalysisResult, locked: T
             if (locked == null) Text(stringResource(R.string.tap_to_lock), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(3.dp))
+    }
+}
+
+/** ", now D (rising)" and the like, when the singers have wandered from the centre key. */
+@Composable
+private fun wanderNote(heard: com.donfluids.music.dsp.AnalysisResult, centre: com.donfluids.music.music.Key): String {
+    val now = heard.keyNow ?: return ""
+    val low = heard.keyRangeLow; val high = heard.keyRangeHigh
+    return when {
+        heard.keyMove == com.donfluids.music.dsp.KeyLevelTracker.Move.SETTLED && now != centre -> " · " + stringResource(R.string.now_settled, now.name)
+        heard.keyMove == com.donfluids.music.dsp.KeyLevelTracker.Move.RISING -> " · " + stringResource(R.string.now_rising, now.name)
+        heard.keyMove == com.donfluids.music.dsp.KeyLevelTracker.Move.FALLING -> " · " + stringResource(R.string.now_falling, now.name)
+        now != centre -> " · " + stringResource(R.string.now_key, now.name)
+        low != null && high != null && low != high -> " · " + stringResource(R.string.range_keys, low.name, high.name)
+        else -> ""
     }
 }
 

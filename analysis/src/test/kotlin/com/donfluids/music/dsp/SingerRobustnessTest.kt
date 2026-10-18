@@ -62,7 +62,7 @@ class SingerRobustnessTest {
         a.result
     }
 
-    private fun describe(rs: List<AnalysisResult>) = rs.joinToString { "${it.displayKey?.label} pair=${it.pairDecided} mode=${it.modeDecided} spread=${it.singerSpreadCents.toInt()} tuning=${it.tuningCents.toInt()}" }
+    private fun describe(rs: List<AnalysisResult>) = rs.joinToString { "${it.displayKey?.label} now=${it.keyNow?.label} pair=${it.pairDecided} mode=${it.modeDecided} spread=${it.singerSpreadCents.toInt()} tuning=${it.tuningCents.toInt()}" }
 
     /** The one rule for every kind of singing: decided means right. */
     private fun neverSureAndWrong(rs: List<AnalysisResult>) {
@@ -102,8 +102,8 @@ class SingerRobustnessTest {
         val rs = hear(Singing(15.0, 80.0, -80.0))
         neverSureAndWrong(rs)
         assertTrue(describe(rs), rs.all { it.displayKey == cMajor })
-        // The tracked offset has moved with them, not stayed at concert pitch.
-        assertTrue(describe(rs), rs.all { it.tuningCents < -15f })
+        // The drift has been followed: either they now read in B, or still in C but well flat.
+        assertTrue(describe(rs), rs.all { it.keyNow == cMajor.transposed(-1) || it.tuningCents < -15f })
     }
 
     @Test

@@ -61,15 +61,19 @@ class PitchTracker(
 }
 
 /**
- * A sung note on the singer's own grid. [pitch] is where the note actually sat, fractional
- * (60.3 is 30 cents above middle C), after the singer's offset and drift are removed; [midi]
- * is the nearest semitone, derived from it so the two can never disagree.
+ * A sung note. [pitch] is where the note sat on the grid the app was using for this singer
+ * at the time, fractional (60.3 is 30 cents above middle C); [gridCents] is that grid's offset
+ * from concert pitch, so [concertPitch] is what was actually sung. [midi] is the nearest
+ * semitone on the grid, derived from [pitch] so the two can never disagree.
  */
-data class SungNote(val pitch: Double, val startSeconds: Double, val durationSeconds: Double) {
-    /** A note sung exactly on a semitone. */
-    constructor(midi: Int, startSeconds: Double, durationSeconds: Double) : this(midi.toDouble(), startSeconds, durationSeconds)
+data class SungNote(val pitch: Double, val startSeconds: Double, val durationSeconds: Double, val gridCents: Double = 0.0) {
+    /** A note sung exactly on a semitone at concert pitch. */
+    constructor(midi: Int, startSeconds: Double, durationSeconds: Double) : this(midi.toDouble(), startSeconds, durationSeconds, 0.0)
 
     val midi: Int get() = Math.round(pitch).toInt()
+
+    /** The pitch as sung, against A = 440 Hz. */
+    val concertPitch: Double get() = pitch + gridCents / 100.0
 }
 
 /**
@@ -110,14 +114,18 @@ class NoteSegmenter(
     private var runFrames = 0
     private var runSteadyFrames = 0
     private var runPlainSum = 0.0
+    private var runGridSum = 0.0
     private val history = ArrayDeque<Pair<Double, Double>>()
 
     fun reset() { notes.clear(); runStart = -1.0; history.clear() }
 
     private fun runCentre(): Double = if (runWeight > 0.2) runWeightedSum / runWeight else runPlainSum / runFrames
 
-    /** [midi] is fractional, already on the singer's grid; pass NaN for an unvoiced frame. */
-    fun push(midi: Double, timeSeconds: Double) {
+    /**
+     * [midi] is fractional, already on the singer's grid, which sits [gridCents] from concert
+     * pitch; pass NaN for an unvoiced frame.
+     */
+    fun push(midi: Double, timeSeconds: Double, gridCents: Double = 0.0) {
         if (midi.isNaN()) {
             history.clear()
             if (runStart >= 0 && timeSeconds - runEnd > gapSeconds) close()
@@ -135,11 +143,11 @@ class NoteSegmenter(
             if (away > holdSemitones || timeSeconds - runEnd > gapSeconds) close()
         }
         if (runStart < 0) {
-            runStart = timeSeconds; runWeightedSum = 0.0; runWeight = 0.0; runFrames = 0; runSteadyFrames = 0; runPlainSum = 0.0
+            runStart = timeSeconds; runWeightedSum = 0.0; runWeight = 0.0; runFrames = 0; runSteadyFrames = 0; runPlainSum = 0.0; runGridSum = 0.0
         }
         runEnd = timeSeconds
         runWeightedSum += midi * steadiness; runWeight += steadiness
-        runPlainSum += midi; runFrames++
+        runPlainSum += midi; runGridSum += gridCents; runFrames++
         if (steadiness > 0.5) runSteadyFrames++
     }
 
@@ -147,7 +155,7 @@ class NoteSegmenter(
         if (runStart < 0 || runEnd - runStart < minNoteSeconds) return null
         if (runSteadyFrames < minSteadyShare * runFrames) return null
         val centre = runCentre()
-        return SungNote(centre, runStart, runEnd - runStart)
+        return SungNote(centre, runStart, runEnd - runStart, runGridSum / runFrames)
     }
 
     fun close() {
