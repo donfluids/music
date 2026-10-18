@@ -65,6 +65,13 @@ class PianoSynth(
             if (!value) synchronized(lock) { for (v in voices) if (v.active && !v.held && !v.releasing) release(v) }
         }
 
+    /**
+     * Pitch classes this synth is audibly sounding after the last render (bit n = pitch class
+     * n, C = 0), including release tails, so a listener can tell its own notes from a singer's.
+     */
+    @Volatile var soundingMask: Int = 0
+        private set
+
     /** Number of voices currently sounding. */
     val activeVoices: Int get() = synchronized(lock) { voices.count { it.active } }
 
@@ -187,6 +194,12 @@ class PianoSynth(
                 }
                 if (v.pending == null && ((v.releasing && v.envelope < 2e-3) || v.harmonicAmp[0] < 1e-4)) v.active = false
             }
+            var mask = 0
+            for (v in voices) {
+                // Audible: about 34 dB below a full-velocity note, the level a phone mic still picks up.
+                if (v.active && v.midi >= 0 && v.envelope * v.harmonicAmp[0] > 0.02) mask = mask or (1 shl Math.floorMod(v.midi, 12))
+            }
+            soundingMask = if (volume > 0.01f) mask else 0
         }
         // Gentle limiter so many keys at once do not clip harshly.
         val gain = volume

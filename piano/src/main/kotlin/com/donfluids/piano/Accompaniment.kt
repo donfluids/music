@@ -11,6 +11,9 @@ class Accompaniment(private val sampleRate: Int) {
     val bass = PianoSynth(sampleRate, maxVoices = 4).also { it.tone = PianoSynth.Tone.BASS; it.volume = 1f }
     val comp = PianoSynth(sampleRate, maxVoices = 12).also { it.tone = PianoSynth.Tone.ELECTRIC; it.volume = 1f }
 
+    /** Pitch classes the band's bass and chords are sounding (the drums have no pitch to speak of). */
+    val soundingMask: Int get() = if (volume > 0.01f) comp.soundingMask or bass.soundingMask else 0
+
     @Volatile var style: Style = Style.WORSHIP_SLOW
         set(value) { field = value; comp.tone = value.compTone; restart = true }
     @Volatile var bpm: Int = 72

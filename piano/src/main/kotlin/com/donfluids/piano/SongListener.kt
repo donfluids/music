@@ -20,41 +20,33 @@ class SongListener(private val context: Context) {
     val running: Boolean get() = capture != null
     /** True while the microphone path is cancelling the phone's own playback. */
     val echoCancelling: Boolean get() = capture?.echoCancelling == true
-    private var cancelling = false
 
     /**
-     * [withBand]: the band is playing through the speaker, so open the microphone with echo
-     * cancellation so the analyser hears the singers rather than the band.
+     * The pitch classes the app is sounding in audio captured at a given time, so the analysis
+     * leaves the app's own piano and band out. Set before [start].
      */
-    fun start(withBand: Boolean) {
+    var ownSound: ((Long) -> Int)? = null
+
+    /**
+     * Opens the microphone with the phone's echo cancelling on whenever it has one: the app
+     * plays through the same speaker the microphone hears, whether the band or your own keys.
+     */
+    fun start() {
         if (capture != null) return
         _error.value = null
         val cap = AudioCapture(
             context,
             listener = { samples, count, now -> analyzer?.let { if (it.process(samples, count, now)) _result.value = it.result } },
             onError = { message -> _error.value = message; capture = null },
-            echoCancel = withBand,
+            echoCancel = true,
         )
         try { cap.start() } catch (e: Exception) { _error.value = e.message ?: "Could not open the microphone"; return }
-        // Keep what was already heard when only the microphone path changes.
-        val kept = analyzer?.takeIf { keepAnalysis && it.sampleRate == cap.sampleRate }
-        analyzer = kept ?: MusicAnalyzer(cap.sampleRate, AnalysisPreset.VOICES)
-        keepAnalysis = false
+        analyzer = newAnalyzer(cap.sampleRate)
         capture = cap
-        cancelling = withBand
-        if (kept == null) _result.value = AnalysisResult()
+        _result.value = AnalysisResult()
     }
 
-    private var keepAnalysis = false
-
-    /** Reopens the microphone with or without echo cancellation; the song heard so far is kept. */
-    fun setBandPlaying(playing: Boolean) {
-        if (capture == null || playing == cancelling) return
-        capture?.stop()
-        capture = null
-        keepAnalysis = true
-        start(withBand = playing)
-    }
+    private fun newAnalyzer(rate: Int) = MusicAnalyzer(rate, AnalysisPreset.VOICES).also { a -> a.ownSound = { t -> ownSound?.invoke(t) ?: 0 } }
 
     fun stop() {
         capture?.stop()
@@ -65,7 +57,7 @@ class SongListener(private val context: Context) {
     /** Forget the previous song. */
     fun reset() {
         val cap = capture ?: return
-        analyzer = MusicAnalyzer(cap.sampleRate, AnalysisPreset.VOICES)
+        analyzer = newAnalyzer(cap.sampleRate)
         _result.value = AnalysisResult()
     }
 }

@@ -129,7 +129,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     var bandChord by remember { mutableStateOf<BandChord?>(null) }
     val splitMidi = 60
     val context = LocalContext.current
-    val listener = remember { SongListener(context.applicationContext) }
+    // Listen leaves out whatever this app is sounding through the speaker, keys and band alike.
+    val listener = remember { SongListener(context.applicationContext).also { l -> l.ownSound = { t -> output()?.ownSound?.mask(t) ?: 0 } } }
     var listening by remember { mutableStateOf(false) }
     var followChords by remember { mutableStateOf(settings.followChords) }
     /** A key the player chose by hand from the candidates; overrides what is heard. */
@@ -166,7 +167,6 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
         bandPlaying = on
         output()?.band?.playing = on
         output()?.metronome?.enabled = metronomeOn && !on
-        if (listening) listener.setBandPlaying(on)
     }
 
     val view = LocalView.current
@@ -177,7 +177,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     val micDenied = stringResource(R.string.mic_denied)
     var micMessage by remember { mutableStateOf<String?>(null) }
     fun startListening() {
-        listener.start(withBand = bandPlaying)
+        listener.start()
         listening = listener.running
         lastHarmonizedAt = -1L
         tapEntry.reset(); tapCount = 0
@@ -216,11 +216,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
     // the player's act (Tap in, the transport, or a chord), never the listener's.
     LaunchedEffect(heard, listening) {
         if (!listening) return@LaunchedEffect
-        if (bandEntering && output()?.band?.startAtNanos == 0L) {
-            bandEntering = false
-            // The band is now on the speaker: reopen the microphone with echo cancellation.
-            listener.setBandPlaying(true)
-        }
+        if (bandEntering && output()?.band?.startAtNanos == 0L) bandEntering = false
         if (!bandPlaying) {
             // Four times a second, name the chord the melody implies within the key.
             val k = heard.displayKey ?: heard.key
@@ -245,9 +241,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 val halfBar = band.barCount * 2 + (if (band.beatIndex * 2 >= bandStyle.beatsPerBar) 1 else 0)
                 if (halfBar != lastHarmonizedAt) {
                     lastHarmonizedAt = halfBar
-                    // Through the speaker the band is in the microphone too; the harmoniser discounts its chord.
-                    val leak = if (listener.echoCancelling) 0.7f else 0.4f
-                    val next = MelodyHarmonizer(sc, switchMargin = switchMargin).next(heard.recentChroma, bandChord, bandLeak = leak)
+                    // The analysis already leaves out the band's own notes, so no further discount here.
+                    val next = MelodyHarmonizer(sc, switchMargin = switchMargin).next(heard.recentChroma, bandChord)
                     if (next != bandChord) { bandChord = next; band.setChord(next) }
                 }
             }
@@ -339,7 +334,7 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
             }
         }
         (error ?: micError ?: micMessage)?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium) }
-        if (listening && bandPlaying && !bandEntering && !listener.echoCancelling) {
+        if (listening && !listener.echoCancelling) {
             Text(stringResource(R.string.speaker_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (listening && !bandPlaying && (heard.displayKey ?: heard.key) != null) {

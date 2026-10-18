@@ -15,6 +15,8 @@ class AudioOutput(context: Context, private val onError: (String) -> Unit) {
     val metronome = Metronome(sampleRate)
     val reverb = Reverb(sampleRate)
     val band = Accompaniment(sampleRate)
+    /** What this app is sounding, for Listen to leave out. */
+    val ownSound = OwnSound()
 
     private var thread: Thread? = null
     @Volatile private var running = false
@@ -58,6 +60,7 @@ class AudioOutput(context: Context, private val onError: (String) -> Unit) {
                 // The device plays this block roughly one buffer after we hand it over.
                 val at = System.nanoTime() + (bufferFrames.toDouble() / sampleRate * 1e9).toLong()
                 band.mix(buffer, block, at)
+                ownSound.sounded(synth.soundingMask or band.soundingMask, at)
                 reverb.process(buffer, block)
                 metronome.mix(buffer, block, at)
                 val written = track.write(buffer, 0, block, AudioTrack.WRITE_BLOCKING)

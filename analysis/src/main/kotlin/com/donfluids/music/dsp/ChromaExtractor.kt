@@ -127,6 +127,13 @@ class ChromaExtractor(
      * Analyse the audio ending at index [end] (exclusive) in [buffer]; at least [windowSamples]
      * samples must precede it. [hopSeconds] is the time since the previous call.
      */
+    /**
+     * Pitch classes this device is itself sounding (bit n = pitch class n, C = 0). Peaks within
+     * [OWN_TOLERANCE_CENTS] of those notes at concert pitch are turned down and kept out of the
+     * tuning estimate. Set before each [process] call.
+     */
+    var ownMask: Int = 0
+
     fun process(buffer: FloatArray, end: Int, hopSeconds: Double) {
         main.compute(buffer, end)
         bass.compute(buffer, end)
@@ -180,12 +187,30 @@ class ChromaExtractor(
             val nearest = semitone.roundToInt()
             val cents = (semitone - nearest) * 100.0
             val pc = Math.floorMod(nearest + 9, 12)
-            val weight = if (hz <= rollOffHz) m.toDouble() else m.toDouble() * (rollOffHz / hz)
+            var weight = if (hz <= rollOffHz) m.toDouble() else m.toDouble() * (rollOffHz / hz)
+            if (ownMask != 0) {
+                // The device's own notes sit exactly on concert pitch; a singer rarely does.
+                val concert = 12.0 * log2(hz / referenceHz)
+                val concertNearest = concert.roundToInt()
+                val concertPc = Math.floorMod(concertNearest + 9, 12)
+                if (ownMask and (1 shl concertPc) != 0 && kotlin.math.abs(concert - concertNearest) * 100.0 < OWN_TOLERANCE_CENTS) {
+                    frameChroma[pc] += (weight * OWN_DISCOUNT).toFloat()
+                    frameWeight += weight * OWN_DISCOUNT
+                    continue
+                }
+            }
             frameChroma[pc] += weight.toFloat()
             frameWeight += weight
             val angle = cents / 100.0 * 2.0 * Math.PI
             frameX += weight * cos(angle)
             frameY += weight * sin(angle)
         }
+    }
+
+    companion object {
+        /** How close to the device's own note, at concert pitch, a peak must be to count as it. */
+        const val OWN_TOLERANCE_CENTS = 30.0
+        /** What is left of the device's own notes after the discount. */
+        const val OWN_DISCOUNT = 0.2
     }
 }

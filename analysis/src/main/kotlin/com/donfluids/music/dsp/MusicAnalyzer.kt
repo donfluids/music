@@ -118,6 +118,15 @@ class MusicAnalyzer(
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
     private val chordTracker = ChordTracker()
     private val pitchTracker = if (preset.melodicKey) PitchTracker(sampleRate) else null
+    /**
+     * Pitch classes this device is itself sounding in audio captured at the given time
+     * (System.nanoTime(); bit n = pitch class n, C = 0), so an app that plays music while it
+     * listens can turn its own notes down in the pitch-class energy (key, chords, the sung
+     * chord). Called on the analysis thread.
+     */
+    @Volatile var ownSound: ((Long) -> Int)? = null
+    private var ownNow = 0
+
     private val singer = SingerModel()
     private val segmenter = NoteSegmenter().also { seg -> seg.onNote = { singer.observe(it) } }
     private var keyFromMelody = false
@@ -279,6 +288,9 @@ class MusicAnalyzer(
 
         var changed = false
         if (hopIndex % chromaEveryHops == 0L) {
+            ownNow = ownSound?.invoke(hopEndNanos) ?: 0
+            // A sounding note's third overtone lands on its fifth: leave that out too.
+            chromaExtractor.ownMask = ownNow or ((ownNow shl 7) or (ownNow ushr 5)) and 0xFFF
             chromaExtractor.process(window, windowSize, hopSeconds * chromaEveryHops)
             run {
                 val decay = kotlin.math.exp(-(hopSeconds * chromaEveryHops) / recentChromaSeconds).toFloat()
@@ -311,12 +323,14 @@ class MusicAnalyzer(
     private fun updateMelody() {
         val tracker = pitchTracker ?: return
         val now = hopIndex * hopSeconds
-        if (tracker.process(window, windowSize)) {
-            // On the singer's own grid, which follows them as they drift.
-            segmenter.push(tracker.midi - singer.offsetCents / 100.0, now)
-        } else {
+        // The device's own notes are not removed here: a singer in tune with the piano reads
+        // exactly like it, and dropping those readings lost most of the melody when playing along.
+        if (!tracker.process(window, windowSize)) {
             segmenter.push(Double.NaN, now)
+            return
         }
+        // On the singer's own grid, which follows them as they drift.
+        segmenter.push(tracker.midi - singer.offsetCents / 100.0, now)
     }
 
     private fun updateKey() {

@@ -119,8 +119,10 @@ object RelativeKeyResolver {
             for ((i, n) in notes.withIndex()) {
                 // A G sung sharp is only partly a G#.
                 val share = softShares(n.pitch, sigma).firstOrNull { it.first == raised }?.second ?: continue
+                // A held G# is aimed; a blip of a tenth of a second may be a slide or a mix-up.
+                val held = (n.durationSeconds / 0.4).coerceAtMost(1.0)
                 // Resolving up to the minor's tonic is the textbook use; any G# still counts.
-                count += share * if (notes.getOrNull(i + 1)?.let { pc(it) == m } == true) 1.0 else 0.5
+                count += share * held * if (notes.getOrNull(i + 1)?.let { pc(it) == m } == true) 1.0 else 0.5
             }
             return -(1.2 * count).coerceAtMost(2.5)
         }
