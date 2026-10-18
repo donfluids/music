@@ -14,6 +14,9 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
     namespace = "com.donfluids.music"
     compileSdk = 36
 
@@ -85,6 +88,13 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    // Screenshots of the screen, rendered on the build machine (Robolectric) and saved as PNGs (Roborazzi).
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.org.json)
 }
 
@@ -92,4 +102,18 @@ dependencies {
 val clipsDir = providers.gradleProperty("clips.dir")
 tasks.withType<Test>().configureEach {
     if (clipsDir.isPresent) systemProperty("clips.dir", clipsDir.get())
+}
+
+// Robolectric's Android system jar for the screenshot tests, fetched by Gradle (with its retries
+// and cache) instead of by Robolectric at test time, then used offline.
+val robolectricAndroidAll: Configuration by configurations.creating
+dependencies { robolectricAndroidAll("org.robolectric:android-all-instrumented:15-robolectric-13954326-i7") }
+val robolectricJars = tasks.register<Copy>("robolectricJars") {
+    from(robolectricAndroidAll)
+    into(layout.buildDirectory.dir("robolectric-jars"))
+}
+tasks.withType<Test>().configureEach {
+    dependsOn(robolectricJars)
+    systemProperty("robolectric.offline", "true")
+    systemProperty("robolectric.dependency.dir", layout.buildDirectory.dir("robolectric-jars").get().asFile.absolutePath)
 }
