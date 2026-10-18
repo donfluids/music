@@ -48,7 +48,14 @@ class Accompaniment(private val sampleRate: Int) {
     @Volatile private var stopNotes = false
     private var samplePos = 0.0 // position within the bar, in samples
     private var nextEvent = 0
-    private class Event(val sample: Double, val step: Int, val drum: DrumHit?, val bass: BassNote?, val comp: CompHit?, val fill: Boolean = false)
+    /**
+     * [grooveBar]: for a recorded groove, which bar of the loop this hit belongs to (-1: every bar).
+     * [beat]: a silent marker on each beat for the display (-1 otherwise).
+     */
+    private class Event(
+        val sample: Double, val step: Int, val drum: DrumHit?, val bass: BassNote?, val comp: CompHit?,
+        val fill: Boolean = false, val grooveBar: Int = -1, val beat: Int = -1,
+    )
     @Volatile private var fillRequested = false
     private var fillActiveThisBar = false
     private var crashNextDownbeat = false
@@ -81,7 +88,20 @@ class Accompaniment(private val sampleRate: Int) {
             return (st + if (offbeat) s.swing * s.stepsPerBeat else 0f) * step
         }
         val list = ArrayList<Event>()
-        s.drums.forEach { list += Event(pos(it.step), it.step, it, null, null) }
+        val groove = s.groove
+        if (groove != null) {
+            // The drummer's own timing: positions in beats, kept off the grid where they were played.
+            val beatSamples = step * s.stepsPerBeat
+            for (h in groove.hits) {
+                val bar = (h.beat / groove.beatsPerBar).toInt().coerceIn(0, groove.bars - 1)
+                val inBar = h.beat - bar * groove.beatsPerBar
+                val st = (inBar * s.stepsPerBeat + 1e-3).toInt().coerceIn(0, s.stepsPerBar - 1)
+                list += Event(inBar * beatSamples, st, DrumHit(st, h.drum, h.velocity), null, null, grooveBar = bar)
+            }
+        } else {
+            s.drums.forEach { list += Event(pos(it.step), it.step, it, null, null) }
+        }
+        for (b in 0 until s.beatsPerBar) list += Event(b * s.stepsPerBeat * step, b * s.stepsPerBeat, null, null, null, beat = b)
         s.bass.forEach { list += Event(pos(it.step), it.step, null, it, null) }
         s.comp.forEach { list += Event(pos(it.step), it.step, null, null, it) }
         s.fill.forEach { list += Event(pos(it.step), it.step, it, null, null, fill = true) }
@@ -166,10 +186,10 @@ class Accompaniment(private val sampleRate: Int) {
 
     private fun fire(e: Event, atNanos: Long) {
         val s = style
-        if (e.step % s.stepsPerBeat == 0 && e.drum != null) {
-            val beat = e.step / s.stepsPerBeat
-            if (beat != beatIndex || e.step == 0) { beatIndex = beat; beatAtNanos = atNanos }
-        }
+        if (e.beat >= 0) { beatIndex = e.beat; beatAtNanos = atNanos }
+        // A recorded groove spans several bars: each hit plays only in its own bar of the loop.
+        val groove = s.groove
+        if (e.grooveBar >= 0 && groove != null && e.grooveBar.toLong() != Math.floorMod(barCount, groove.bars.toLong())) return
         e.drum?.let { hit ->
             // During a fill the pattern's drums in the fill region give way to the fill's hits.
             val inFillRegion = e.step >= s.fillStart
@@ -180,7 +200,8 @@ class Accompaniment(private val sampleRate: Int) {
             }
             if (e.step == 0 && crashNextDownbeat && !e.fill) {
                 crashNextDownbeat = false
-                if (s.drums.none { it.step == 0 && it.drum == Drum.CRASH }) drums.trigger(Drum.CRASH, 0.6f)
+                val crashWritten = groove?.hits?.any { it.drum == Drum.CRASH && it.beat < 0.25f } ?: s.drums.any { it.step == 0 && it.drum == Drum.CRASH }
+                if (!crashWritten) drums.trigger(Drum.CRASH, 0.6f)
             }
         }
         val c = chord ?: return

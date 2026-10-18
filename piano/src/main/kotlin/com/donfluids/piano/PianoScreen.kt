@@ -441,6 +441,8 @@ fun PianoScreen(output: () -> AudioOutput?, settings: Settings, error: String?) 
                 Slider(value = volume, onValueChange = { volume = it; synth()?.volume = it }, onValueChangeFinished = { settings.volume = volume })
                 Text(stringResource(R.string.band_volume), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
                 Slider(value = bandVolume, onValueChange = { bandVolume = it; output()?.band?.volume = it }, onValueChangeFinished = { settings.bandVolume = bandVolume })
+                // The licence for the recorded grooves asks for credit where they are used.
+                Text(stringResource(R.string.credits_grooves), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 16.dp))
             }
         }
     }

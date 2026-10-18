@@ -32,6 +32,7 @@
     <string name="key_settled">settled</string>
     <string name="or_relative">or</string>
     <string name="best_guess">Best guess</string>
+    <string name="credits_grooves">Drum grooves: excerpts from the Groove MIDI Dataset by Google LLC (Magenta), licensed CC BY 4.0 (creativecommons.org/licenses/by/4.0). Cut to four-bar loops and mapped to Mini Piano\'s drum sounds.</string>
     <string name="boost">Extra loud (may distort on some phones)</string>
     <string name="now_key">now %1$s</string>
     <string name="now_settled">moved to %1$s</string>

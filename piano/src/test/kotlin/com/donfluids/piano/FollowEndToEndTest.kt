@@ -52,8 +52,14 @@ class FollowEndToEndTest {
     }
 
     /** Runs the follower over [mic], returning the chord the band was playing at the end of each bar. */
-    private fun follow(mic: FloatArray, leakBand: Boolean, bandLeak: Float = 1f): List<String> {
+    /**
+     * [ownSound]: the app's current path, where the analyser is told which notes the band is
+     * sounding and turns them down, as Listen does.
+     */
+    private fun follow(mic: FloatArray, leakBand: Boolean, ownSound: Boolean = false): List<String> {
         val analyzer = MusicAnalyzer(rate, AnalysisPreset.VOICES)
+        val own = OwnSound()
+        if (ownSound) analyzer.ownSound = { t -> own.mask(t) }
         val band = Accompaniment(rate)
         band.style = Style.POP_16; band.bpm = bpm; band.playing = true
         val scale = Theory.Scale(7, minor = false)
@@ -70,12 +76,13 @@ class FollowEndToEndTest {
             val n = minOf(block, mic.size - i)
             java.util.Arrays.fill(bandOut, 0f)
             band.mix(bandOut, n, 0L)
+            own.sounded(band.soundingMask, (i.toDouble() / rate * 1e9).toLong())
             val input = FloatArray(n) { k -> mic[i + k] + if (leakBand) bandOut[k] * 1.2f else 0f }
             analyzer.process(input, n, ((i + n).toDouble() / rate * 1e9).toLong())
             val halfBar = band.barCount * 2 + (if (band.beatIndex * 2 >= 4) 1 else 0)
             if (halfBar != lastHalfBar) {
                 lastHalfBar = halfBar
-                val next = harmonizer.next(analyzer.result.recentChroma, chord, bandLeak = bandLeak)
+                val next = harmonizer.next(analyzer.result.recentChroma, chord)
                 if (next != chord) { chord = next; band.setChord(next) }
             }
             if (band.barCount != lastBar) { if (lastBar >= 0) chordsAtBarEnd += chord.name(); lastBar = band.barCount }
@@ -106,15 +113,14 @@ class FollowEndToEndTest {
         assertTrue("leakage should not do better than a clean signal", leakedScore <= cleanScore)
     }
 
+
     @Test
-    fun theLeakGuardLetsTheSpeakerCaseFollowToo() {
+    fun withTheAppsOwnNotesLeftOutTheSpeakerCaseFollows() {
+        // How Listen works now: the analyser turns down the band's own notes.
         val expected = listOf("G", "G", "C", "C", "D", "D", "Em", "Em")
-        val guarded = follow(melody(), leakBand = true, bandLeak = 0.4f)
-        val guardedScore = guarded.indices.count { guarded[it] == expected[it] }
-        val clean = follow(melody(), leakBand = false, bandLeak = 0.4f)
-        val cleanScore = clean.indices.count { clean[it] == expected[it] }
-        println("guarded leaked $guarded = $guardedScore/8; guarded clean $clean = $cleanScore/8")
-        assertTrue("leaked with guard: $guardedScore/8", guardedScore >= 6)
-        assertTrue("clean with guard: $cleanScore/8", cleanScore >= 7)
+        val got = follow(melody(), leakBand = true, ownSound = true)
+        val score = got.indices.count { got[it] == expected[it] }
+        println("own-sound leaked $got = $score/8")
+        assertTrue("own-sound leaked: $score/8", score >= 6)
     }
 }

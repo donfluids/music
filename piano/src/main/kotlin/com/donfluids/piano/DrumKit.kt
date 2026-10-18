@@ -4,8 +4,8 @@ import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
 
-/** Synthesised kick, snare, hats, shaker and rim; a small pool of one-shot voices. */
-class DrumKit(private val sampleRate: Int, voices: Int = 12) {
+/** Synthesised kick, snare, hats, ride, shaker and rim; a pool of one-shot voices. */
+class DrumKit(private val sampleRate: Int, voices: Int = 24) {
     private class Hit {
         var active = false
         var drum = Drum.KICK
@@ -51,7 +51,11 @@ class DrumKit(private val sampleRate: Int, voices: Int = 12) {
                             (sin(h.phase) * exp(-t / 0.22) * 1.1 + click(h, t, 0.004) * 0.3).toFloat()
                         }
                         Drum.SNARE -> {
-                            val tone = sin(2 * PI * 185.0 * t) * exp(-t / 0.06) * 0.5
+                            // The shell's body drops in pitch as it rings, as a real snare's does, so
+                            // it reads as a drum rather than a sung note.
+                            val f = 165.0 + 75.0 * exp(-t / 0.012)
+                            h.phase += 2 * PI * f / sampleRate
+                            val tone = sin(h.phase) * exp(-t / 0.05) * 0.45
                             val nz = highPassed(h, white(h), 0.2f) * exp(-t / 0.11).toFloat() * 0.9f
                             (tone + nz).toFloat()
                         }
@@ -69,6 +73,11 @@ class DrumKit(private val sampleRate: Int, voices: Int = 12) {
                             h.phase += 2 * PI * f / sampleRate
                             (sin(h.phase) * exp(-t / 0.24) * 1.0 + click(h, t, 0.003) * 0.25).toFloat()
                         }
+                        Drum.RIDE -> {
+                            // A metallic ping over a softer wash: inharmonic partials, medium decay.
+                            val ping = (sin(2 * PI * 2350.0 * t) * 0.5 + sin(2 * PI * 3520.0 * t) * 0.35 + sin(2 * PI * 5110.0 * t) * 0.2) * exp(-t / 0.22)
+                            (ping * 0.22 + highPassed(h, white(h), 0.75f) * exp(-t / 0.5).toFloat() * 0.18f + click(h, t, 0.002) * 0.15).toFloat()
+                        }
                         Drum.CRASH -> {
                             // Bright noise with a touch of inharmonic ring, long decay.
                             val ring = (sin(2 * PI * 3140.0 * t) + sin(2 * PI * 4730.0 * t)) * 0.08 * exp(-t / 0.5)
@@ -78,7 +87,7 @@ class DrumKit(private val sampleRate: Int, voices: Int = 12) {
                     out[offset + i] += s * h.velocity
                     h.n++
                 }
-                val length = when (h.drum) { Drum.KICK -> 0.5; Drum.SNARE -> 0.3; Drum.HAT -> 0.1; Drum.OPEN_HAT -> 0.8; Drum.SHAKER -> 0.2; Drum.RIM -> 0.08; Drum.CRASH -> 2.0; Drum.TOM_HI -> 0.4; Drum.TOM_LO -> 0.5 }
+                val length = when (h.drum) { Drum.KICK -> 0.5; Drum.SNARE -> 0.3; Drum.HAT -> 0.1; Drum.OPEN_HAT -> 0.8; Drum.SHAKER -> 0.2; Drum.RIM -> 0.08; Drum.CRASH -> 2.0; Drum.TOM_HI -> 0.4; Drum.TOM_LO -> 0.5; Drum.RIDE -> 1.2 }
                 if (h.n > length * sampleRate) h.active = false
             }
         }

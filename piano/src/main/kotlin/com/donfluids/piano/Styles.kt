@@ -64,7 +64,7 @@ data class BandChord(val root: Int, val quality: Quality) {
     }
 }
 
-enum class Drum { KICK, SNARE, HAT, OPEN_HAT, SHAKER, RIM, CRASH, TOM_HI, TOM_LO }
+enum class Drum { KICK, SNARE, HAT, OPEN_HAT, SHAKER, RIM, CRASH, TOM_HI, TOM_LO, RIDE }
 
 /** What the bass plays at a step, relative to the current chord. */
 enum class BassDegree { ROOT, THIRD, FIFTH, SIXTH, SEVENTH, OCTAVE, FIFTH_BELOW }
@@ -90,9 +90,12 @@ class Style(
     val swing: Float = 0f,
     /** Instrument for the comping part. */
     val compTone: PianoSynth.Tone = PianoSynth.Tone.ELECTRIC,
+    /** The written one-bar drum pattern, used when the style has no recorded [groove]. */
     val drums: List<DrumHit>,
     val bass: List<BassNote>,
     val comp: List<CompHit>,
+    /** A recorded drum loop played instead of [drums]: a real drummer's timing and dynamics. */
+    val groove: Groove? = null,
 ) {
     val stepsPerBar get() = beatsPerBar * stepsPerBeat
 
@@ -126,6 +129,7 @@ class Style(
             drums = kick(0, 8) + rim(4, 12) + hat(0, 2, 4, 6, 8, 10, 12, 14, v = 0.3f) + shaker(1, 3, 5, 7, 9, 11, 13, 15, v = 0.15f),
             bass = listOf(BassNote(0, BassDegree.ROOT, 12), BassNote(12, BassDegree.FIFTH, 4, 0.7f)),
             comp = listOf(CompHit(0, 16, Voicing.FULL, 0.6f), CompHit(8, 8, Voicing.UPPER, 0.4f)),
+            groove = Grooves.WORSHIP_SLOW,
         )
         val WORSHIP_68 = Style(
             "worship_68", "Worship 6/8", 2, 6, 52, "6/8",
@@ -144,6 +148,7 @@ class Style(
                 BassNote(8, BassDegree.ROOT, 2), BassNote(10, BassDegree.ROOT, 2, 0.7f), BassNote(12, BassDegree.OCTAVE, 2, 0.8f), BassNote(14, BassDegree.FIFTH, 2, 0.8f),
             ),
             comp = listOf(CompHit(0, 3, Voicing.FULL, 0.8f), CompHit(4, 3, Voicing.UPPER, 0.6f), CompHit(6, 2, Voicing.UPPER, 0.5f), CompHit(8, 3, Voicing.FULL, 0.8f), CompHit(12, 3, Voicing.UPPER, 0.6f), CompHit(14, 2, Voicing.UPPER, 0.5f)),
+            groove = Grooves.ROCK_8,
         )
         val POWER_ROCK = Style(
             "power_rock", "Power Rock", 4, 4, 152, "4/4", compTone = PianoSynth.Tone.ORGAN,
@@ -156,18 +161,21 @@ class Style(
                 CompHit(0, 2, Voicing.POWER, 0.9f), CompHit(2, 2, Voicing.POWER, 0.7f), CompHit(4, 2, Voicing.POWER, 0.9f), CompHit(6, 2, Voicing.POWER, 0.7f),
                 CompHit(8, 2, Voicing.POWER, 0.9f), CompHit(10, 2, Voicing.POWER, 0.7f), CompHit(12, 2, Voicing.POWER, 0.9f), CompHit(14, 2, Voicing.POWER, 0.7f),
             ),
+            groove = Grooves.POWER_ROCK,
         )
         val POP_16 = Style(
             "pop_16", "Pop 16-Beat", 4, 4, 100, "4/4",
             drums = kick(0, 6, 8) + snare(4, 12) + (0 until 16).map { DrumHit(it, Drum.HAT, if (it % 4 == 0) 0.6f else if (it % 2 == 0) 0.4f else 0.25f) },
             bass = listOf(BassNote(0, BassDegree.ROOT, 4), BassNote(6, BassDegree.ROOT, 2, 0.7f), BassNote(8, BassDegree.FIFTH, 4, 0.8f), BassNote(14, BassDegree.ROOT, 2, 0.7f)),
             comp = listOf(CompHit(0, 6, Voicing.FULL, 0.7f), CompHit(6, 2, Voicing.UPPER, 0.5f), CompHit(8, 6, Voicing.UPPER, 0.6f), CompHit(14, 2, Voicing.UPPER, 0.5f)),
+            groove = Grooves.POP_16,
         )
         val GOSPEL_SHUFFLE = Style(
             "gospel_shuffle", "Gospel Shuffle", 4, 4, 112, "4/4", swing = 0.33f,
             drums = kick(0, 8) + snare(4, 12) + hat(0, 2, 4, 6, 8, 10, 12, 14, v = 0.55f),
             bass = listOf(BassNote(0, BassDegree.ROOT, 4), BassNote(4, BassDegree.THIRD, 4, 0.8f), BassNote(8, BassDegree.FIFTH, 4, 0.8f), BassNote(12, BassDegree.SIXTH, 4, 0.8f)),
             comp = listOf(CompHit(2, 2, Voicing.UPPER, 0.5f), CompHit(4, 3, Voicing.FULL, 0.8f), CompHit(10, 2, Voicing.UPPER, 0.5f), CompHit(12, 3, Voicing.FULL, 0.8f)),
+            groove = Grooves.GOSPEL_SHUFFLE,
         )
         val WALTZ = Style(
             "waltz", "Waltz", 3, 4, 96, "3/4",

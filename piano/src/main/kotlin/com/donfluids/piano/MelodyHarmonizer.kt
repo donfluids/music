@@ -38,16 +38,11 @@ class MelodyHarmonizer(
     /**
      * The chord to play next, given what was just sung and what is playing now. Returns
      * [current] when nothing clearly better is heard, or when too little was heard at all.
-     * [bandLeak] scales the current chord's own tones in [chroma] (1 = trust the microphone,
-     * 0.4 suits a phone speaker in the room); it costs nothing on a clean signal.
      */
-    fun next(chroma: List<Float>, current: BandChord?, minEnergy: Float = 1e-4f, bandLeak: Float = 1f): BandChord {
+    fun next(chroma: List<Float>, current: BandChord?, minEnergy: Float = 1e-4f): BandChord {
         val fallback = current ?: chords[0]
         if (chroma.sum() < minEnergy) return fallback
-        // The band's own chord reaches the microphone from the speaker. Its chord tones are
-        // discounted so a sung note outside the chord still shows through.
-        val heard = if (bandLeak < 1f && current != null) chroma.mapIndexed { pc, v -> if (pc in current.pitchClasses) v * bandLeak else v } else chroma
-        val s = scores(heard)
+        val s = scores(chroma)
         var best = 0
         for (i in s.indices) if (s[i] > s[best]) best = i
         val currentIndex = chords.indexOfFirst { it.root == current?.root && it.quality.intervals[1] == current.quality.intervals[1] }
