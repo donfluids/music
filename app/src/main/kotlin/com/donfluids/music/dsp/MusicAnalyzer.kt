@@ -46,6 +46,17 @@ data class AnalysisResult(
     val tuningConfidence: Float = 0f,
     /** Notes sung so far, on the singer's grid, when the preset tracks the melody. */
     val sungNotes: List<SungNote> = emptyList(),
+    /**
+     * Where untrained singers are now, when they have wandered from the centre key ([key] and
+     * [displayKey] are the centre: where the singing spent most of its time). Equal to the centre
+     * while they stay put.
+     */
+    val keyNow: Key? = null,
+    /** The lowest and highest keys most of the singing sat in; equal to the centre when steady. */
+    val keyRangeLow: Key? = null,
+    val keyRangeHigh: Key? = null,
+    /** How the singers' key has been moving lately. */
+    val keyMove: KeyLevelTracker.Move = KeyLevelTracker.Move.STEADY,
     /** How far the singer's notes scatter around the grid, in cents: a few for a good singer, 25+ for a poor one. */
     val singerSpreadCents: Float = 0f,
     /** True when the shown key came from the melody rather than from chroma. */
@@ -118,7 +129,30 @@ class MusicAnalyzer(
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
     private val chordTracker = ChordTracker()
     private val pitchTracker = if (preset.melodicKey) PitchTracker(sampleRate) else null
+    /**
+     * Pitch classes this device is itself sounding in audio captured at the given time
+     * (System.nanoTime(); bit n = pitch class n, C = 0), so an app that plays music while it
+     * listens can turn its own notes down in the pitch-class energy (key, chords, the sung
+     * chord). Called on the analysis thread.
+     */
+    @Volatile var ownSound: ((Long) -> Int)? = null
+    private var ownNow = 0
+
     private val singer = SingerModel()
+    private val levelTracker = KeyLevelTracker()
+    private var keyLevel: KeyLevelTracker.Level? = null
+    private var nowShiftShown = 0
+
+    /** Sung notes for the key finders: moved back to the centre when the singers wander. */
+    private fun keyNotes(): List<SungNote> = keyLevel?.notes ?: segmenter.snapshot()
+    /**
+     * The singer's spread for key decisions: the larger of the scatter around the wandering
+     * curve and the scatter around the plain semitone grid. The first can understate a very
+     * careless singer (a note-to-note change never exceeds half a semitone once wrapped); the
+     * second overstates a careful one who wanders. Decisions lean to caution.
+     */
+    private fun keySpreadCents(): Double = maxOf(keyLevel?.spreadCents ?: 0.0, singer.spreadCents)
+    private fun keySigma(): Double = (keySpreadCents() / 100.0).coerceIn(0.1, 0.35)
     private val segmenter = NoteSegmenter().also { seg -> seg.onNote = { singer.observe(it) } }
     private var keyFromMelody = false
 
@@ -220,6 +254,9 @@ class MusicAnalyzer(
         levelSamples = 0
         recentChroma.fill(0f)
         segmenter.reset()
+        levelTracker.reset()
+        keyLevel = null
+        nowShiftShown = 0
         keyFromMelody = false
         chordTracker.reset()
         segments.clear()
@@ -279,6 +316,9 @@ class MusicAnalyzer(
 
         var changed = false
         if (hopIndex % chromaEveryHops == 0L) {
+            ownNow = ownSound?.invoke(hopEndNanos) ?: 0
+            // A sounding note's third overtone lands on its fifth: leave that out too.
+            chromaExtractor.ownMask = ownNow or ((ownNow shl 7) or (ownNow ushr 5)) and 0xFFF
             chromaExtractor.process(window, windowSize, hopSeconds * chromaEveryHops)
             run {
                 val decay = kotlin.math.exp(-(hopSeconds * chromaEveryHops) / recentChromaSeconds).toFloat()
@@ -311,24 +351,44 @@ class MusicAnalyzer(
     private fun updateMelody() {
         val tracker = pitchTracker ?: return
         val now = hopIndex * hopSeconds
-        if (tracker.process(window, windowSize)) {
-            // On the singer's own grid, which follows them as they drift.
-            segmenter.push(tracker.midi - singer.offsetCents / 100.0, now)
-        } else {
+        // The device's own notes are not removed here: a singer in tune with the piano reads
+        // exactly like it, and dropping those readings lost most of the melody when playing along.
+        if (!tracker.process(window, windowSize)) {
             segmenter.push(Double.NaN, now)
+            return
         }
+        // On the singer's own grid, which follows them as they drift.
+        segmenter.push(tracker.midi - singer.offsetCents / 100.0, now, singer.offsetCents)
     }
 
     private fun updateKey() {
+        if (pitchTracker != null) {
+            val notes = segmenter.snapshot()
+            // The wandering model only takes over once there is enough singing to trust it and the
+            // singers have actually wandered: most of a semitone across most of the singing, or
+            // that far from the centre right now. A short, scattered clip can otherwise be read as
+            // sitting halfway between two keys, and moving every note by that half flips them.
+            keyLevel = levelTracker.analyse(notes)?.takeIf { l ->
+                notes.size >= 16 && notes.sumOf { it.durationSeconds } >= 6.0 &&
+                    (l.highCents - l.lowCents >= 70.0 || kotlin.math.abs(l.nowCents - l.centreCents) >= 70.0)
+            }
+            if (keyLevel == null) nowShiftShown = 0
+            keyLevel?.let { l ->
+                // Where the singers are now, relative to the centre's key, with a little hysteresis
+                // so a level hovering halfway between two keys does not flicker.
+                val rel = l.nowCents - 100.0 * Math.round(l.centreCents / 100.0)
+                if (kotlin.math.abs(rel - 100.0 * nowShiftShown) > 65.0) nowShiftShown = Math.round(rel / 100.0).toInt()
+            }
+        }
         updateKeyInner()
         // The finders settle the pair of keys (the seven notes); which of the pair is home is
         // decided separately, from where phrases rest, the leading tone, cadence approaches
         // and chords.
         val found = pendingKey
         if (found != null) {
-            val notes = if (pitchTracker != null) segmenter.snapshot() else emptyList()
+            val notes = if (pitchTracker != null) keyNotes() else emptyList()
             val now = hopIndex * hopSeconds
-            val sigma = if (pitchTracker != null) singer.sigmaSemitones else 0.0
+            val sigma = if (pitchTracker != null) keySigma() else 0.0
             // A lone voice's overtones read as chords (a sung E looks like an E major chord), so
             // with a tracked melody the chord evidence is left out: the notes speak for themselves.
             val chords = if (pitchTracker != null) emptyList() else currentSegments()
@@ -347,8 +407,8 @@ class MusicAnalyzer(
         // A lone melody: once enough notes are in, the melodic finder decides and chroma only
         // breaks ties. Its evidence (phrase endings, the longest note) is what a listener uses.
         if (pitchTracker != null) {
-            val notes = segmenter.snapshot()
-            val melodic = if (notes.size >= 8) MelodicKeyFinder.rank(notes, sigma = singer.sigmaSemitones) else emptyList()
+            val notes = keyNotes()
+            val melodic = if (notes.size >= 8) MelodicKeyFinder.rank(notes, sigma = keySigma()) else emptyList()
             if (melodic.size >= 2) {
                 val best = melodic[0]
                 val margin = ((best.score - melodic[1].score) * 4.0).coerceIn(0.0, 1.0)
@@ -490,7 +550,7 @@ class MusicAnalyzer(
      */
     private fun evidenceNeeded(): Double {
         if (pitchTracker == null || singer.notesSeen < 4) return 1.0
-        return (1.0 + (singer.spreadCents - 20.0) / 20.0).coerceIn(1.0, 2.0)
+        return (1.0 + (keySpreadCents() - 20.0) / 20.0).coerceIn(1.0, 2.0)
     }
 
     /**
@@ -501,12 +561,12 @@ class MusicAnalyzer(
      */
     private fun pairIsClear(notes: List<SungNote>): Boolean {
         if (notes.size < 16) return false
-        val sigma = singer.sigmaSemitones
+        val sigma = keySigma()
         val ranked = MelodicKeyFinder.rank(notes, sigma = sigma)
         if (ranked.isEmpty()) return false
         val bestPair = RelativeKeyResolver.pair(ranked[0].key).first
         val other = ranked.firstOrNull { RelativeKeyResolver.pair(it.key).first != bestPair } ?: return false
-        val need = 0.05 + 0.006 * (singer.spreadCents - 10.0).coerceAtLeast(0.0)
+        val need = 0.05 + 0.006 * (keySpreadCents() - 10.0).coerceAtLeast(0.0)
         if (ranked[0].score - other.score < need) return false
         val n = minOf(16, notes.size / 2)
         val recent = MelodicKeyFinder.rank(notes.subList(notes.size - n, notes.size), sigma = sigma).firstOrNull()?.key ?: return false
@@ -612,8 +672,17 @@ class MusicAnalyzer(
             modeDecided = chordsOverride || (pairOk && modeTracker.decided != null),
             modeScore = modeTracker.score.toFloat(),
             keyAlternatives = pendingAlternatives,
-            tuningCents = if (pitchTracker != null && singer.notesSeen >= 4) singer.currentCents.toFloat() else chromaExtractor.tuningOffsetCents().toFloat(),
-            singerSpreadCents = if (pitchTracker != null && singer.notesSeen >= 4) singer.spreadCents.toFloat() else 0f,
+            tuningCents = when {
+                // How far the singers sit from the key shown as "now".
+                keyLevel != null -> keyLevel!!.let { l -> l.nowCents - 100.0 * (Math.round(l.centreCents / 100.0) + nowShiftShown) }.toFloat()
+                pitchTracker != null && singer.notesSeen >= 4 -> singer.currentCents.toFloat()
+                else -> chromaExtractor.tuningOffsetCents().toFloat()
+            },
+            singerSpreadCents = if (pitchTracker != null && singer.notesSeen >= 4) keySpreadCents().toFloat() else 0f,
+            keyNow = shownDisplay?.let { k -> if (keyLevel != null && !chordsOverride) k.transposed(nowShiftShown) else k },
+            keyRangeLow = shownDisplay?.let { k -> keyLevel?.takeIf { !chordsOverride }?.let { k.transposed(it.lowShift) } ?: k },
+            keyRangeHigh = shownDisplay?.let { k -> keyLevel?.takeIf { !chordsOverride }?.let { k.transposed(it.highShift) } ?: k },
+            keyMove = keyLevel?.takeIf { !chordsOverride }?.move ?: KeyLevelTracker.Move.STEADY,
             tuningConfidence = chromaExtractor.tuningConfidence().toFloat(),
             sungNotes = if (pitchTracker != null) segmenter.snapshot() else emptyList(),
             keyFromMelody = keyFromMelody,

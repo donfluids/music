@@ -93,6 +93,7 @@ import com.donfluids.music.R
 import com.donfluids.music.UiState
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
+import com.donfluids.music.dsp.KeyLevelTracker
 import com.donfluids.music.music.ChordLabel
 import com.donfluids.music.music.ChordQuality
 import com.donfluids.music.music.Key
@@ -114,6 +115,8 @@ private class Shown(
     val orRelative: Key?,
     /** The singing does not yet point clearly to one key: what is shown is a best guess. */
     val bestGuess: Boolean,
+    /** Where wandering singers are now, transposed; null when they are in the shown key. */
+    val now: Key?,
     /** The chord sounding now, transposed. */
     val chord: ChordLabel?,
     val transpose: Int,
@@ -131,6 +134,7 @@ private fun shown(s: UiState): Shown {
         keyHeld = s.heldKey != null,
         orRelative = if (s.heldKey == null && a.pairDecided && !a.modeDecided) base?.relative?.transposed(s.transpose) else null,
         bestGuess = s.heldKey == null && base != null && !a.pairDecided,
+        now = a.keyNow?.takeIf { s.heldKey == null && it != a.displayKey }?.transposed(s.transpose),
         chord = a.currentChord?.transposed(s.transpose),
         transpose = s.transpose,
         nashville = s.nashville,
@@ -438,6 +442,8 @@ private fun KeyAndChordRow(sh: Shown) {
             value = sh.key?.name ?: "–",
             sub = when {
                 sh.keyHeld && sh.key != null -> sh.key.mode.label + " · " + stringResource(R.string.sub_held)
+                // Singers who have wandered: the big key is the centre, and this says where they are now.
+                sh.key != null && sh.now != null -> stringResource(R.string.sub_now, sh.key.mode.label, sh.now.name)
                 sh.key != null && sh.bestGuess -> stringResource(R.string.sub_best_guess, sh.key.mode.label)
                 sh.key != null && sh.orRelative != null -> stringResource(R.string.sub_or_relative, sh.key.mode.label, sh.orRelative.label)
                 sh.key != null -> sh.key.mode.label
@@ -552,18 +558,26 @@ private fun HintLines(sh: Shown, a: AnalysisResult) {
         if (sh.key != null && sh.orRelative != null && a.secondsHeard >= 4f) {
             add(stringResource(R.string.hint_major_or_minor, sh.key.label, sh.orRelative.label))
         }
+        if (sh.key != null && !sh.keyHeld) {
+            val now = (a.keyNow ?: a.displayKey)?.transposed(sh.transpose)
+            val low = a.keyRangeLow?.transposed(sh.transpose)
+            val high = a.keyRangeHigh?.transposed(sh.transpose)
+            when {
+                a.keyMove == KeyLevelTracker.Move.SETTLED && sh.now != null -> add(stringResource(R.string.hint_settled, sh.now.label))
+                a.keyMove == KeyLevelTracker.Move.RISING && now != null -> add(stringResource(R.string.hint_rising, now.label))
+                a.keyMove == KeyLevelTracker.Move.FALLING && now != null -> add(stringResource(R.string.hint_falling, now.label))
+                low != null && high != null && low != high -> add(stringResource(R.string.hint_wandering, low.name, high.name, sh.key.label))
+            }
+        }
         if (sh.key != null && sh.bestGuess && a.secondsHeard >= 4f) {
             val spread = a.singerSpreadCents.roundToInt()
             add(if (spread >= 25) stringResource(R.string.hint_best_guess_scattered, spread) else stringResource(R.string.hint_best_guess))
         }
+        // How far the singers sit from the key they are in now. A whole semitone or more of
+        // wandering shows as "now" instead.
         val cents = a.tuningCents.roundToInt()
-        val nearer = sh.key?.transposed((cents / 100.0).roundToInt())
-        when {
-            // Drifted most of a semitone: the keyboard's nearest key has changed.
-            abs(cents) > 50 && nearer != null && nearer != sh.key ->
-                add(if (cents > 0) stringResource(R.string.hint_drift_sharp, cents, nearer.label) else stringResource(R.string.hint_drift_flat, -cents, nearer.label))
-            a.tuningConfidence >= 0.2f && abs(cents) >= 25 ->
-                add(if (cents > 0) stringResource(R.string.hint_tuning_sharp, cents) else stringResource(R.string.hint_tuning_flat, -cents))
+        if (a.tuningConfidence >= 0.2f && abs(cents) >= 25) {
+            add(if (cents > 0) stringResource(R.string.hint_tuning_sharp, cents) else stringResource(R.string.hint_tuning_flat, -cents))
         }
     }
     if (lines.isEmpty()) return
