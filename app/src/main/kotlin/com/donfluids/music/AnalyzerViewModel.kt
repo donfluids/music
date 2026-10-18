@@ -48,6 +48,11 @@ data class UiState(
     val clipAwaitingLabels: String? = null,
     /** A zip ready to hand to the share sheet; the screen consumes and clears it. */
     val shareFile: File? = null,
+    /** The tempo the player tapped in, or null; [tapAnchorNanos] is the last tap, for the pulse. */
+    val tapBpm: Float? = null,
+    val tapAnchorNanos: Long = 0L,
+    /** Taps in the current count, so the screen can ask for a few more. */
+    val tapCount: Int = 0,
 )
 
 /**
@@ -149,8 +154,25 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(listening = false, heldKey = null) }
     }
 
+    private val tapTempo = TapTempo()
+
+    /** For screenshot tests only: shows a prepared state. */
+    internal fun showStateForScreenshot(state: UiState) { _state.value = state }
+
+    /** A tap on the beat: from the second tap on, the tempo is shown and pulses. */
+    fun tapBeat(nowNanos: Long = System.nanoTime()) {
+        val r = tapTempo.tap(nowNanos)
+        _state.update { it.copy(tapBpm = r?.bpm, tapAnchorNanos = r?.lastTapNanos ?: nowNanos, tapCount = r?.taps ?: 1) }
+    }
+
+    fun clearTapTempo() {
+        tapTempo.clear()
+        _state.update { it.copy(tapBpm = null, tapAnchorNanos = 0L, tapCount = 0) }
+    }
+
     /** Forget everything heard so far: a fresh analyser replaces the old one, never mutated in place. */
     fun reset() {
+        clearTapTempo()
         session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, _state.value.preset) }
         recorder.get()?.analysisStartSeconds = 0f // the clip's chord filter follows the new clock
         _state.update { it.copy(analysis = AnalysisResult(), tempoMultiplier = 1f, heldKey = null, transpose = 0) }

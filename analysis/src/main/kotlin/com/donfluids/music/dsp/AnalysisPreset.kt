@@ -29,6 +29,12 @@ data class AnalysisPreset(
     val meterMinBeats: Int,
     /** Find the key from the sung melody (pitch-tracked notes) rather than from chroma alone. */
     val melodicKey: Boolean = false,
+    /**
+     * Whether the screen shows a tempo and time signature read from the sound. Drums and strums
+     * give a pulse the app can follow; singing alone rarely does, so with this off the player
+     * taps the tempo in instead.
+     */
+    val readsBeat: Boolean = true,
 ) {
     companion object {
         /** Drums, guitar, keys and voices through a monitor. Kick and snare drive the beat. */
@@ -61,7 +67,7 @@ data class AnalysisPreset(
         val VOICES = AnalysisPreset(
             id = "voices",
             title = "Voices",
-            description = "Mostly singing. Slower to decide, harder to fool.",
+            description = "Mostly singing. Reads the key from the melody; tap the tempo in yourself.",
             onsetMinHz = 150.0, onsetMaxHz = 5000.0, onsetGamma = 10f,
             onsetLowBandMaxHz = 0.0, onsetLowBandWeight = 0f,
             chromaMinHz = 80.0, chromaMaxHz = 2000.0, chromaRollOffHz = 1000.0,
@@ -69,6 +75,7 @@ data class AnalysisPreset(
             tempoPriorCenterBpm = 120.0, tempoPriorWidthOctaves = 0.55,
             meterMinBeats = 12,
             melodicKey = true,
+            readsBeat = false,
         )
 
         val ALL = listOf(BAND, GUITAR, VOICES)

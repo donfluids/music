@@ -11,6 +11,16 @@
     <string name="label_key">key</string>
     <string name="label_chord">chord now</string>
     <string name="label_bpm">bpm</string>
+    <string name="label_pitch">pitch</string>
+    <string name="sub_in_tune">in tune</string>
+    <string name="sub_sharp">sharp</string>
+    <string name="sub_flat">flat</string>
+    <string name="tap_value">Tap</string>
+    <string name="sub_tap_the_beat">tap the beat</string>
+    <string name="sub_keep_tapping">keep tapping</string>
+    <string name="sub_hold_to_clear">hold to clear</string>
+    <string name="tap_action">tap the beat</string>
+    <string name="tap_clear">clear the tapped tempo</string>
     <string name="label_time">time</string>
     <string name="sub_settling">settling</string>
     <string name="sub_in_threes">in 3s</string>

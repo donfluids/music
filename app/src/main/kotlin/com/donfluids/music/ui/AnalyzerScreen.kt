@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,7 +68,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -110,6 +113,11 @@ private class Shown(
     /** The key to play in (transposed), or null. */
     val key: Key?,
     val keyConfidence: Float,
+    /**
+     * How settled the shown key is, 0..1: it fills as the key holds steady, and stops at half
+     * while the app is still unsure of the key or of major against minor.
+     */
+    val keySettled: Float,
     val keyHeld: Boolean,
     /** Null once the singing has shown which is home; otherwise the relative key, transposed. */
     val orRelative: Key?,
@@ -131,6 +139,11 @@ private fun shown(s: UiState): Shown {
     return Shown(
         key = base?.transposed(s.transpose),
         keyConfidence = a.displayKeyConfidence,
+        keySettled = when {
+            s.heldKey != null -> 1f
+            base == null -> 0f
+            else -> (a.keyHeldSeconds / KEY_SETTLE_SECONDS).coerceIn(0f, 1f) * (if (a.pairDecided && a.modeDecided) 1f else 0.5f)
+        },
         keyHeld = s.heldKey != null,
         orRelative = if (s.heldKey == null && a.pairDecided && !a.modeDecided) base?.relative?.transposed(s.transpose) else null,
         bestGuess = s.heldKey == null && base != null && !a.pairDecided,
@@ -207,14 +220,17 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
         ) {
             StatusLine(state, viewModel::stopClip)
             KeyAndChordRow(sh)
-            TempoAndTimeRow(a, state.tempoMultiplier, state.listening, viewModel::setTempoMultiplier)
-            HintLines(sh, a)
+            // Drums and strums give a pulse to read; singing alone rarely does, so for voices the
+            // row shows how far off pitch the singers are and a tempo the player taps in.
+            if (state.preset.readsBeat) TempoAndTimeRow(a, state.tempoMultiplier, state.listening, viewModel::setTempoMultiplier)
+            else PitchAndTapRow(a, state, viewModel::tapBeat, viewModel::clearTapTempo)
+            HintLines(sh, a, showTuning = state.preset.readsBeat)
             sh.key?.let { key ->
                 TransposeRow(sh, viewModel::setTranspose, viewModel::setNashville)
                 ChordsInKey(key, sh)
             }
             if (a.chordSegments.isNotEmpty() || a.currentChord != null) ChordTimeline(a, sh)
-            Details(a, sh)
+            Details(a, sh, showMeter = state.preset.readsBeat)
             Spacer(Modifier.height(8.dp))
         }
     }
@@ -450,7 +466,7 @@ private fun KeyAndChordRow(sh: Shown) {
                 else -> null
             },
             label = stringResource(R.string.label_key),
-            confidence = if (sh.key != null) sh.keyConfidence else 0f,
+            confidence = sh.keySettled,
             modifier = Modifier.weight(1f),
         )
         HeroValue(
@@ -461,6 +477,129 @@ private fun KeyAndChordRow(sh: Shown) {
             accent = true,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+/** Row 2 for singing: how far off pitch the singers are, and a tempo the player taps in. */
+@Composable
+private fun PitchAndTapRow(a: AnalysisResult, state: UiState, onTap: () -> Unit, onClear: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
+        PitchCell(a, Modifier.weight(1f))
+        TapCell(state, onTap, onClear, Modifier.weight(1f))
+    }
+}
+
+/** Cents sharp or flat of the key the singers are in now, as a number and a tuner needle. */
+@Composable
+private fun PitchCell(a: AnalysisResult, modifier: Modifier) {
+    val known = a.sungNotes.size >= 4 || a.tuningConfidence >= 0.2f
+    val cents = a.tuningCents.roundToInt()
+    val sub = when {
+        !known -> null
+        abs(cents) < IN_TUNE_CENTS -> stringResource(R.string.sub_in_tune)
+        cents > 0 -> stringResource(R.string.sub_sharp)
+        else -> stringResource(R.string.sub_flat)
+    }
+    // Nudged down to sit level with the tap button's padded contents beside it.
+    Column(modifier.padding(top = TAP_PAD_V)) {
+        HeroValue(
+            value = if (known) signedCents(cents) else "–",
+            sub = sub,
+            label = stringResource(R.string.label_pitch),
+            confidence = if (known) 1f else 0f,
+            showBar = false,
+        )
+        Spacer(Modifier.height(8.dp))
+        TunerBar(if (known) cents else null)
+    }
+}
+
+private fun signedCents(c: Int) = when {
+    c > 0 -> "+$c¢"
+    c < 0 -> "\u2212${-c}¢"
+    else -> "0¢"
+}
+
+/** A tuner: a track from 50 cents flat to 50 sharp, the in-tune zone shaded, a dot where the singers are. */
+@Composable
+private fun TunerBar(cents: Int?) {
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val zone = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    val tick = MaterialTheme.colorScheme.outline
+    val inTune = MaterialTheme.colorScheme.primary
+    val off = MaterialTheme.colorScheme.onBackground
+    Canvas(Modifier.fillMaxWidth().height(26.dp).clearAndSetSemantics { }) {
+        val mid = size.height / 2
+        drawRoundRect(track, topLeft = Offset(0f, mid - 3.dp.toPx()), size = Size(size.width, 6.dp.toPx()), cornerRadius = CornerRadius(3.dp.toPx()))
+        val zoneHalf = size.width / 2 * IN_TUNE_CENTS / 50f
+        drawRect(zone, topLeft = Offset(size.width / 2 - zoneHalf, 0f), size = Size(2 * zoneHalf, size.height))
+        drawLine(tick, Offset(size.width / 2, 2.dp.toPx()), Offset(size.width / 2, size.height - 2.dp.toPx()), strokeWidth = 2.dp.toPx())
+        if (cents != null) {
+            val x = size.width / 2 + size.width / 2 * (cents.coerceIn(-50, 50) / 50f)
+            drawCircle(if (abs(cents) < IN_TUNE_CENTS) inTune else off, radius = 7.dp.toPx(), center = Offset(x, mid))
+        }
+    }
+}
+
+/** Tap on the beat: the tempo shows from the second tap and pulses; a long press clears it. */
+@Composable
+private fun TapCell(state: UiState, onTap: () -> Unit, onClear: () -> Unit, modifier: Modifier) {
+    val haptics = LocalHapticFeedback.current
+    val bpm = state.tapBpm
+    val sub = when {
+        bpm == null && state.tapCount == 0 -> stringResource(R.string.sub_tap_the_beat)
+        state.tapCount < 4 -> stringResource(R.string.sub_keep_tapping)
+        else -> stringResource(R.string.sub_hold_to_clear)
+    }
+    // A soft button: it must read as something to tap, whether it shows "Tap" or a tempo.
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .combinedClickable(
+                role = Role.Button,
+                onClickLabel = stringResource(R.string.tap_action),
+                onLongClickLabel = stringResource(R.string.tap_clear),
+                onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); onTap() },
+                onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onClear() },
+            )
+            .padding(horizontal = 14.dp, vertical = TAP_PAD_V),
+    ) {
+        HeroValue(
+            value = bpm?.roundToInt()?.toString() ?: stringResource(R.string.tap_value),
+            sub = sub,
+            label = stringResource(R.string.label_bpm),
+            confidence = (state.tapCount / 4f).coerceIn(0f, 1f),
+            accent = bpm == null,
+            showBar = false,
+        )
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.height(26.dp), contentAlignment = Alignment.CenterStart) {
+            if (bpm != null) PulseDot(bpm, state.tapAnchorNanos)
+        }
+    }
+}
+
+/** One dot that swells on each tapped beat, kept in step with the last tap. */
+@Composable
+private fun PulseDot(bpm: Float, anchorNanos: Long) {
+    val frame = remember { mutableLongStateOf(System.nanoTime()) }
+    LaunchedEffect(bpm, anchorNanos) { while (true) withFrameNanos { frame.longValue = it } }
+    val primary = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier
+            .size(22.dp)
+            .clearAndSetSemantics { }
+            .graphicsLayer {
+                val period = 60e9 / bpm
+                val elapsed = (frame.value - anchorNanos) / period
+                val phase = (elapsed - floor(elapsed)).toFloat()
+                val s = 1f + 0.35f * exp(-phase * 6f)
+                scaleX = s; scaleY = s
+                alpha = 0.5f + 0.5f * exp(-phase * 4f)
+            },
+    ) {
+        Canvas(Modifier.fillMaxSize()) { drawCircle(primary) }
     }
 }
 
@@ -507,6 +646,8 @@ private fun HeroValue(
     confidence: Float,
     modifier: Modifier = Modifier,
     accent: Boolean = false,
+    /** The thin confidence line; off where a cell draws its own gauge underneath. */
+    showBar: Boolean = true,
 ) {
     val known = value != "–"
     val settled = confidence >= 0.5f
@@ -529,7 +670,7 @@ private fun HeroValue(
             modifier = Modifier.fillMaxWidth().height(60.dp),
         )
         Spacer(Modifier.height(6.dp))
-        Box(Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+        if (showBar) Box(Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
             Box(
                 Modifier
                     .fillMaxWidth(confidence.coerceIn(0f, 1f))
@@ -548,7 +689,7 @@ private fun HeroValue(
 }
 
 @Composable
-private fun HintLines(sh: Shown, a: AnalysisResult) {
+private fun HintLines(sh: Shown, a: AnalysisResult, showTuning: Boolean = true) {
     val other = if (a.displayKeyFromChords) a.key?.takeIf { it != a.displayKey } else a.songKey?.takeIf { it != a.displayKey }
     val lines = buildList {
         if (!sh.keyHeld && other != null) {
@@ -576,7 +717,7 @@ private fun HintLines(sh: Shown, a: AnalysisResult) {
         // How far the singers sit from the key they are in now. A whole semitone or more of
         // wandering shows as "now" instead.
         val cents = a.tuningCents.roundToInt()
-        if (a.tuningConfidence >= 0.2f && abs(cents) >= 25) {
+        if (showTuning && a.tuningConfidence >= 0.2f && abs(cents) >= 25) {
             add(if (cents > 0) stringResource(R.string.hint_tuning_sharp, cents) else stringResource(R.string.hint_tuning_flat, -cents))
         }
     }
@@ -767,7 +908,7 @@ private fun ChordTimeline(a: AnalysisResult, sh: Shown) {
 // ---------- details fold ----------
 
 @Composable
-private fun Details(a: AnalysisResult, sh: Shown) {
+private fun Details(a: AnalysisResult, sh: Shown, showMeter: Boolean = true) {
     var open by rememberSaveable { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val expanded = stringResource(R.string.details_expanded)
@@ -824,7 +965,7 @@ private fun Details(a: AnalysisResult, sh: Shown) {
                     }
                 }
                 DetailRow(stringResource(R.string.notes_heard)) { ChromaBars(a.chroma, sh.key?.transposed(-sh.transpose)) }
-                if (a.meterScores.isNotEmpty()) {
+                if (showMeter && a.meterScores.isNotEmpty()) {
                     DetailRow(stringResource(R.string.bar_length)) {
                         a.meterScores.entries.sortedByDescending { it.value }.take(4).forEach { (beats, score) ->
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -923,3 +1064,12 @@ private fun ClipNoticeDialog(onAccept: () -> Unit, onDismiss: () -> Unit) {
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
+
+/** Seconds a key must hold before its underline is full. */
+private const val KEY_SETTLE_SECONDS = 6f
+
+/** Within this many cents of the key the singers count as in tune. */
+private const val IN_TUNE_CENTS = 10
+
+/** Vertical padding inside the tap button, matched by the pitch cell so their numbers line up. */
+private val TAP_PAD_V = 6.dp
