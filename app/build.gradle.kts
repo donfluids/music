@@ -117,3 +117,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("robolectric.offline", "true")
     systemProperty("robolectric.dependency.dir", layout.buildDirectory.dir("robolectric-jars").get().asFile.absolutePath)
 }
+// The test host activity comes from ui-test-manifest, which only the debug build carries.
+tasks.matching { it.name == "testReleaseUnitTest" }.configureEach {
+    (this as Test).filter.excludeTestsMatching("*.ScreenshotTest")
+}
