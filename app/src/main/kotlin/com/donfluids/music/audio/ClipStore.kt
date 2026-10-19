@@ -69,7 +69,7 @@ class ClipStore(context: Context) {
     /** Packs every clip into one zip for sharing. Slow: call off the main thread. */
     fun zipAll(): File {
         shareDir.mkdirs()
-        val zip = File(shareDir, "livekey-clips.zip")
+        val zip = File(shareDir, "keycatch-clips.zip")
         ZipOutputStream(FileOutputStream(zip).buffered()).use { out ->
             dir.listFiles { f -> f.name.endsWith(".wav") || f.name.endsWith(".json") }?.sortedBy { it.name }?.forEach { f ->
                 out.putNextEntry(ZipEntry(f.name))

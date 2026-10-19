@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LiveKey</string>
+    <string name="app_name">KeyCatch</string>
     <string name="listen">Listen</string>
     <string name="stop_listening">Stop listening</string>
     <string name="new_song">New song</string>
     <string name="hold">Hold</string>
     <string name="held">Held</string>
-    <string name="permission_needed">LiveKey needs the microphone to hear the singing.</string>
-    <string name="permission_denied">Microphone permission was denied. Enable it in system settings for LiveKey.</string>
+    <string name="permission_needed">KeyCatch needs the microphone to hear the singing.</string>
+    <string name="permission_denied">Microphone permission was denied. Enable it in system settings for KeyCatch.</string>
     <string name="label_key">Key</string>
     <string name="label_chord">Chord now</string>
     <string name="label_bpm">BPM</string>
@@ -86,7 +86,7 @@
     <string name="record_clip">Record clip for tuning</string>
     <string name="stop_clip">Stop clip</string>
     <string name="share_clips">Share clips</string>
-    <string name="share_clips_title">LiveKey clips</string>
+    <string name="share_clips_title">KeyCatch clips</string>
     <string name="delete_clips">Delete clips</string>
     <string name="rec">REC</string>
     <string name="label_title">What was it really?</string>
@@ -125,8 +125,8 @@
     <string name="history_title">Song history</string>
     <string name="history_share">Share</string>
     <string name="history_clear">Clear</string>
-    <string name="history_share_title">Songs heard with LiveKey</string>
-    <string name="history_empty">Each song is saved here when you press New song or Stop, once LiveKey has found its key. The list stays on this phone.</string>
+    <string name="history_share_title">Songs heard with KeyCatch</string>
+    <string name="history_empty">Each song is saved here when you press New song or Stop, once KeyCatch has found its key. The list stays on this phone.</string>
     <string name="history_today">Today</string>
     <string name="history_yesterday">Yesterday</string>
     <string name="history_bpm">%1$d BPM</string>
