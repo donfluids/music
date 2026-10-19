@@ -14,8 +14,8 @@
     <string name="label_pitch">pitch</string>
     <string name="label_pitch_ref">pitch, A%1$d</string>
     <string name="sub_in_tune">in tune</string>
-    <string name="sub_sharp">sharp</string>
-    <string name="sub_flat">flat</string>
+    <string name="sub_cents_sharp">cents sharp</string>
+    <string name="sub_cents_flat">cents flat</string>
     <string name="tap_value">Tap</string>
     <string name="sub_tap_the_beat">tap the beat</string>
     <string name="sub_keep_tapping">keep tapping</string>
@@ -52,8 +52,6 @@
     <string name="transpose">Transpose</string>
     <string name="transpose_none">sounding key</string>
     <string name="transpose_play">sounding %1$s · play %2$s (%3$+d)</string>
-    <string name="numbers">Numbers</string>
-    <string name="letters">Letters</string>
     <string name="sub_double">×2</string>
     <string name="sub_half">÷2</string>
     <string name="tap_tempo_feel">feel the tempo as double or half</string>
@@ -111,6 +109,10 @@
     <string name="settings_naming">Note names</string>
     <string name="naming_letters">C D E</string>
     <string name="naming_do_re_mi">Do Re Mi</string>
+    <string name="settings_chords">Chords</string>
+    <string name="chords_as_names">Names</string>
+    <string name="chords_as_numbers">Numbers</string>
+    <string name="settings_chords_help">Numbers shows chords by their place in the key (Nashville numbers): 1, 4, 5, 6m.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do: C is always Do.</string>
     <string name="done">Done</string>
     <string name="back">Back</string>
