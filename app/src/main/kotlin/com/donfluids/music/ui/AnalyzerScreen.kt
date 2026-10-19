@@ -13,6 +13,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
@@ -38,13 +40,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,10 +63,14 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -246,20 +250,26 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(SECTION_GAP),
         ) {
             StatusLine(state, viewModel::stopClip)
-            KeyAndChordRow(sh)
-            // Drums and strums give a pulse to read; singing alone rarely does, so for voices the
-            // row shows how far off pitch the singers are and a tempo the player taps in.
-            if (state.preset.readsBeat) TempoAndTimeRow(a, state.tempoMultiplier, state.listening, viewModel::setTempoMultiplier)
-            else PitchAndTapRow(a, sh, state, viewModel::tapBeat, viewModel::clearTapTempo)
-            HintLines(sh, a, showTuning = state.preset.readsBeat)
-            sh.key?.let { key ->
-                TransposeRow(sh, viewModel::setTranspose, viewModel::setNashville)
-                ChordsInKey(key, sh)
+            // What the player reads at a glance.
+            Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
+                KeyAndChordRow(sh)
+                // Drums and strums give a pulse to read; singing alone rarely does, so for voices the
+                // row shows how far off pitch the singers are and a tempo the player taps in.
+                if (state.preset.readsBeat) TempoAndTimeRow(a, state.tempoMultiplier, state.listening, viewModel::setTempoMultiplier)
+                else PitchAndTapRow(a, sh, state, viewModel::tapBeat, viewModel::clearTapTempo)
             }
-            if (a.chordSegments.isNotEmpty() || a.currentChord != null) ChordTimeline(a, sh)
+            HintLines(sh, a, showTuning = state.preset.readsBeat)
+            // Playing along: transpose, the key's chords, and the chords heard.
+            Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
+                sh.key?.let { key ->
+                    TransposeRow(sh, viewModel::setTranspose)
+                    ChordsInKey(key, sh)
+                }
+                if (a.chordSegments.isNotEmpty() || a.currentChord != null) ChordTimeline(a, sh)
+            }
             Details(a, sh, showMeter = state.preset.readsBeat)
             Spacer(Modifier.height(8.dp))
         }
@@ -271,8 +281,10 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
         SettingsDialog(
             referenceHz = state.referenceHz,
             naming = state.naming,
+            nashville = state.nashville,
             onReference = viewModel::setReferenceHz,
             onNaming = viewModel::setNaming,
+            onNashville = viewModel::setNashville,
             onDone = { viewModel.showSettings(false) },
         )
     }
@@ -415,20 +427,22 @@ private fun BottomBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (listening) {
-            OutlinedButton(onClick = onNewSong, modifier = Modifier.weight(1f).height(56.dp)) {
-                Text(stringResource(R.string.new_song), style = MaterialTheme.typography.titleMedium)
+            // Narrow phones: less side padding, and labels that shrink rather than wrap.
+            val pad = PaddingValues(horizontal = 12.dp)
+            OutlinedButton(onClick = onNewSong, contentPadding = pad, modifier = Modifier.weight(1.1f).height(56.dp)) {
+                BarLabel(stringResource(R.string.new_song))
             }
             if (held) {
-                Button(onClick = onHold, modifier = Modifier.weight(1f).height(56.dp)) {
-                    Text(stringResource(R.string.held), style = MaterialTheme.typography.titleMedium)
+                Button(onClick = onHold, contentPadding = pad, modifier = Modifier.weight(1f).height(56.dp)) {
+                    BarLabel(stringResource(R.string.held))
                 }
             } else {
-                FilledTonalButton(onClick = onHold, enabled = canHold, modifier = Modifier.weight(1f).height(56.dp)) {
-                    Text(stringResource(R.string.hold), style = MaterialTheme.typography.titleMedium)
+                FilledTonalButton(onClick = onHold, enabled = canHold, contentPadding = pad, modifier = Modifier.weight(1f).height(56.dp)) {
+                    BarLabel(stringResource(R.string.hold))
                 }
             }
-            OutlinedButton(onClick = onStop, modifier = Modifier.weight(0.8f).height(56.dp)) {
-                Text(stringResource(R.string.stop), style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(onClick = onStop, contentPadding = pad, modifier = Modifier.weight(0.8f).height(56.dp)) {
+                BarLabel(stringResource(R.string.stop))
             }
         } else {
             Button(onClick = onListen, modifier = Modifier.weight(1f).height(56.dp)) {
@@ -436,6 +450,18 @@ private fun BottomBar(
             }
         }
     }
+}
+
+/** A bottom-bar button label: one line, shrinking a little on narrow screens or with large text. */
+@Composable
+private fun BarLabel(text: String) {
+    BasicText(
+        text,
+        style = MaterialTheme.typography.titleMedium.copy(color = LocalContentColor.current, textAlign = TextAlign.Center),
+        maxLines = 1,
+        softWrap = false,
+        autoSize = TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = MaterialTheme.typography.titleMedium.fontSize, stepSize = 1.sp),
+    )
 }
 
 // ---------- main content ----------
@@ -533,7 +559,7 @@ private fun PitchAndTapRow(a: AnalysisResult, sh: Shown, state: UiState, onTap: 
     }
 }
 
-/** Cents sharp or flat of the key the singers are in now, as a number and a tuner needle. */
+/** Cents sharp or flat of the key the singers are in now: the number, and a needle on a dial. */
 @Composable
 private fun PitchCell(a: AnalysisResult, sh: Shown, modifier: Modifier) {
     val known = a.sungNotes.size >= 4 || a.tuningConfidence >= 0.2f
@@ -541,47 +567,60 @@ private fun PitchCell(a: AnalysisResult, sh: Shown, modifier: Modifier) {
     val sub = when {
         !known -> null
         abs(cents) < IN_TUNE_CENTS -> stringResource(R.string.sub_in_tune)
-        cents > 0 -> stringResource(R.string.sub_sharp)
-        else -> stringResource(R.string.sub_flat)
+        cents > 0 -> stringResource(R.string.sub_cents_sharp)
+        else -> stringResource(R.string.sub_cents_flat)
     }
     // Nudged down to sit level with the tap button's padded contents beside it.
     Column(modifier.padding(top = TAP_PAD_V)) {
         HeroValue(
-            value = if (known) signedCents(cents) else "–",
+            value = if (known) signedNumber(cents) else "–",
             sub = sub,
             // The reference is named whenever it is not the usual one, so a forgotten 442 is visible.
             label = if (sh.referenceHz == 440) stringResource(R.string.label_pitch) else stringResource(R.string.label_pitch_ref, sh.referenceHz),
             confidence = if (known) 1f else 0f,
             showBar = false,
         )
-        Spacer(Modifier.height(8.dp))
-        TunerBar(if (known) cents else null)
+        Spacer(Modifier.height(GAUGE_GAP))
+        TunerDial(if (known) cents else null)
     }
 }
 
-private fun signedCents(c: Int) = when {
-    c > 0 -> "+$c¢"
-    c < 0 -> "\u2212${-c}¢"
-    else -> "0¢"
+/** "+11", "−7" (a true minus sign) or "0". */
+private fun signedNumber(c: Int) = when {
+    c > 0 -> "+$c"
+    c < 0 -> "\u2212${-c}"
+    else -> "0"
 }
 
-/** A tuner: a track from 50 cents flat to 50 sharp, the in-tune zone shaded, a dot where the singers are. */
+/** A needle swinging over a dial from 50 cents flat to 50 sharp; teal inside the in-tune stretch, coral outside it. */
 @Composable
-private fun TunerBar(cents: Int?) {
+private fun TunerDial(cents: Int?) {
     val track = MaterialTheme.colorScheme.surfaceVariant
-    val zone = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    val zone = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
     val tick = MaterialTheme.colorScheme.outline
     val inTune = MaterialTheme.colorScheme.primary
-    val off = MaterialTheme.colorScheme.onBackground
-    Canvas(Modifier.fillMaxWidth().height(26.dp).clearAndSetSemantics { }) {
-        val mid = size.height / 2
-        drawRoundRect(track, topLeft = Offset(0f, mid - 3.dp.toPx()), size = Size(size.width, 6.dp.toPx()), cornerRadius = CornerRadius(3.dp.toPx()))
-        val zoneHalf = size.width / 2 * IN_TUNE_CENTS / 50f
-        drawRect(zone, topLeft = Offset(size.width / 2 - zoneHalf, 0f), size = Size(2 * zoneHalf, size.height))
-        drawLine(tick, Offset(size.width / 2, 2.dp.toPx()), Offset(size.width / 2, size.height - 2.dp.toPx()), strokeWidth = 2.dp.toPx())
+    val off = MaterialTheme.colorScheme.tertiary
+    Canvas(Modifier.fillMaxWidth().height(GAUGE_HEIGHT).clearAndSetSemantics { }) {
+        val sweep = 100f
+        val half = Math.toRadians(sweep / 2.0)
+        val r = (size.width / 2 - 6.dp.toPx()) / kotlin.math.sin(half).toFloat()
+        // The pivot sits below the box, so only the top of the dial shows.
+        val pivot = Offset(size.width / 2, 6.dp.toPx() + r)
+        fun at(c: Float, radius: Float): Offset {
+            val ang = Math.toRadians((270f + sweep / 2 * c / 50f).toDouble())
+            return Offset(pivot.x + (radius * kotlin.math.cos(ang)).toFloat(), pivot.y + (radius * kotlin.math.sin(ang)).toFloat())
+        }
+        val box = Size(2 * r, 2 * r)
+        val topLeft = Offset(pivot.x - r, pivot.y - r)
+        drawArc(track, 270f - sweep / 2, sweep, false, topLeft = topLeft, size = box, style = Stroke(5.dp.toPx(), cap = StrokeCap.Round))
+        val zoneSweep = sweep * IN_TUNE_CENTS / 50f
+        drawArc(zone, 270f - zoneSweep / 2, zoneSweep, false, topLeft = topLeft, size = box, style = Stroke(5.dp.toPx()))
+        for (c in intArrayOf(-25, 0, 25)) {
+            drawLine(tick, at(c.toFloat(), r + 4.dp.toPx()), at(c.toFloat(), r + (if (c == 0) -9 else -6).dp.toPx()), strokeWidth = 1.5.dp.toPx())
+        }
         if (cents != null) {
-            val x = size.width / 2 + size.width / 2 * (cents.coerceIn(-50, 50) / 50f)
-            drawCircle(if (abs(cents) < IN_TUNE_CENTS) inTune else off, radius = 7.dp.toPx(), center = Offset(x, mid))
+            val c = cents.coerceIn(-50, 50).toFloat()
+            drawLine(if (abs(cents) < IN_TUNE_CENTS) inTune else off, at(c, r - 30.dp.toPx()), at(c, r + 2.dp.toPx()), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
         }
     }
 }
@@ -618,8 +657,9 @@ private fun TapCell(state: UiState, onTap: () -> Unit, onClear: () -> Unit, modi
             accent = bpm == null,
             showBar = false,
         )
-        Spacer(Modifier.height(8.dp))
-        Box(Modifier.height(26.dp), contentAlignment = Alignment.CenterStart) {
+        Spacer(Modifier.height(GAUGE_GAP))
+        // As tall as the dial beside it, less this box's own bottom padding, so the two cells end level.
+        Box(Modifier.height(GAUGE_HEIGHT - TAP_PAD_V), contentAlignment = Alignment.CenterStart) {
             if (bpm != null) PulseDot(bpm, state.tapAnchorNanos)
         }
     }
@@ -846,36 +886,25 @@ private fun BeatDot(index: Int, beatsPerBar: Int, a: AnalysisResult, multiplier:
 }
 
 @Composable
-private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit, onNashville: (Boolean) -> Unit) {
+private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val key = sh.key ?: return
     val sounding = key.transposed(-sh.transpose)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.transpose), style = MaterialTheme.typography.labelMedium, color = muted)
-        StepButton("−", stringResource(R.string.transpose_down), enabled = sh.transpose > -6) { onTranspose(sh.transpose - 1) }
-        Text(
-            String.format(Locale.ROOT, "%+d", sh.transpose),
-            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = Tabular),
-            modifier = Modifier.width(32.dp),
-            textAlign = TextAlign.Center,
-        )
-        StepButton("+", stringResource(R.string.transpose_up), enabled = sh.transpose < 6) { onTranspose(sh.transpose + 1) }
-        Spacer(Modifier.weight(1f))
-        SingleChoiceSegmentedButtonRow(Modifier.height(36.dp)) {
-            SegmentedButton(selected = !sh.nashville, onClick = { onNashville(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
-                Text(stringResource(if (sh.naming == NoteNaming.FIXED_DO) R.string.naming_do_re_mi else R.string.letters), style = MaterialTheme.typography.labelMedium)
-            }
-            SegmentedButton(selected = sh.nashville, onClick = { onNashville(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) {
-                Text(stringResource(R.string.numbers), style = MaterialTheme.typography.labelMedium)
-            }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.transpose), style = MaterialTheme.typography.labelLarge, color = muted, modifier = Modifier.weight(1f))
+            StepButton("−", stringResource(R.string.transpose_down), enabled = sh.transpose > -6) { onTranspose(sh.transpose - 1) }
+            Text(
+                String.format(Locale.ROOT, "%+d", sh.transpose),
+                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = Tabular),
+                modifier = Modifier.width(32.dp),
+                textAlign = TextAlign.Center,
+            )
+            StepButton("+", stringResource(R.string.transpose_up), enabled = sh.transpose < 6) { onTranspose(sh.transpose + 1) }
         }
-    }
-    if (sh.transpose != 0) {
-        Text(
-            stringResource(R.string.transpose_play, sh.label(sounding), sh.label(key), sh.transpose),
-            style = MaterialTheme.typography.bodySmall,
-            color = muted,
-        )
+        if (sh.transpose != 0) {
+            Text(stringResource(R.string.transpose_play, sh.label(sounding), sh.label(key), sh.transpose), style = MaterialTheme.typography.bodySmall, color = muted)
+        }
     }
 }
 
@@ -885,7 +914,7 @@ internal fun StepButton(glyph: String, description: String, enabled: Boolean, on
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier.size(40.dp).semantics { contentDescription = description },
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+        contentPadding = PaddingValues(0.dp),
     ) {
         Text(glyph, style = MaterialTheme.typography.titleMedium, modifier = Modifier.clearAndSetSemantics { })
     }
@@ -894,10 +923,19 @@ internal fun StepButton(glyph: String, description: String, enabled: Boolean, on
 @Composable
 private fun ChordsInKey(key: Key, sh: Shown) {
     val now = sh.chord
+    val names = key.chords.mapIndexed { i, chord -> if (sh.nashville) (i + 1).toString() + chord.quality.suffix else sh.naming.of(chord.name) }
+    // One size for the whole row, set by its longest name, so the cells never differ.
+    val longest = names.maxOf { it.length }
+    val rowSize = when {
+        longest <= 2 -> 22.sp
+        longest == 3 -> 19.sp
+        longest == 4 -> 16.sp
+        else -> 14.sp
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         key.chords.forEachIndexed { i, chord ->
             val playing = now != null && now.root == key.scale[i] && now.minor == (chord.quality == ChordQuality.MINOR)
-            val name = if (sh.nashville) (i + 1).toString() + chord.quality.suffix else sh.naming.of(chord.name)
+            val name = names[i]
             val description = if (playing) stringResource(R.string.chord_playing, name) else name
             Column(
                 Modifier
@@ -914,7 +952,7 @@ private fun ChordsInKey(key: Key, sh: Shown) {
                     .semantics(mergeDescendants = true) { selected = playing; contentDescription = description },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Shrinks for "Sol#m" and the like, which are wider than a seventh of the screen.
+                // A fixed-height line keeps the numerals level; the shrink only acts on very narrow screens.
                 BasicText(
                     name,
                     style = MaterialTheme.typography.titleLarge.copy(
@@ -924,8 +962,8 @@ private fun ChordsInKey(key: Key, sh: Shown) {
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Clip,
-                    autoSize = TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = 22.sp, stepSize = 1.sp),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                    autoSize = TextAutoSize.StepBased(minFontSize = 11.sp, maxFontSize = rowSize, stepSize = 1.sp),
+                    modifier = Modifier.fillMaxWidth().height(30.dp).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = 2.dp),
                 )
                 Text(chord.numeral, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -936,8 +974,18 @@ private fun ChordsInKey(key: Key, sh: Shown) {
 @Composable
 private fun ChordTimeline(a: AnalysisResult, sh: Shown) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val ground = MaterialTheme.colorScheme.background
+    val scroll = rememberScrollState()
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState(), reverseScrolling = true),
+        Modifier
+            .fillMaxWidth()
+            // Older chords fade out at the left edge instead of being sliced off. Newest is at the
+            // right, so the scroll value counts from that end.
+            .drawWithContent {
+                drawContent()
+                if (scroll.value < scroll.maxValue) drawRect(Brush.horizontalGradient(listOf(ground, ground.copy(alpha = 0f)), endX = 40.dp.toPx()))
+            }
+            .horizontalScroll(scroll, reverseScrolling = true),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         a.chordSegments.takeLast(30).forEach { seg ->
@@ -1124,3 +1172,11 @@ private const val IN_TUNE_CENTS = 10
 
 /** Vertical padding inside the tap button, matched by the pitch cell so their numbers line up. */
 private val TAP_PAD_V = 6.dp
+
+/** The tuner dial's height, and its gap below the number; the tap button's pulse area matches them. */
+private val GAUGE_HEIGHT = 44.dp
+private val GAUGE_GAP = 4.dp
+
+/** Between the screen's groups (status, readouts, hints, playing along, details), and between rows inside a group. */
+private val SECTION_GAP = 24.dp
+private val ROW_GAP = 16.dp

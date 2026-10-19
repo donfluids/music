@@ -90,6 +90,25 @@ class ScreenshotTest {
         ))
     }
 
+    /** A 360 dp phone, the narrowest common width, with the singing and chords from a real test. */
+    @Test @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun smallPhone() {
+        val bb = Key(10, Mode.MAJOR)
+        shoot("10-small-phone", UiState(
+            listening = true, preset = AnalysisPreset.VOICES, tapBpm = 108f, tapAnchorNanos = System.nanoTime(), tapCount = 8,
+            analysis = AnalysisResult(
+                secondsHeard = 60f, key = bb, displayKey = bb, keyNow = bb, keyRangeLow = bb, keyRangeHigh = bb,
+                keyConfidence = 0.4f, displayKeyConfidence = 0.4f, keyHeldSeconds = 4f,
+                tuningCents = 11f, tuningConfidence = 0.5f, singerSpreadCents = 36f, sungNotes = notes,
+                chordSegments = listOf(chord(2, ChordType.MAJOR_SEVENTH), chord(5, ChordType.MINOR), chord(2, ChordType.MINOR), chord(5), chord(2, ChordType.MAJOR_SEVENTH), chord(0, ChordType.MINOR), chord(10))
+                    .mapIndexed { i, c -> ChordSegment(c, i * 2f, i * 2f + 2f) },
+            ),
+        ))
+    }
+
+    @Test @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun smallPhoneSettings() = shoot("11-small-phone-settings", voicesSettled.copy(showSettings = true, referenceHz = 442, nashville = true))
+
     @Test fun voicesWandering() {
         val cs = Key(1, Mode.MAJOR)
         shoot("2-voices-wandering", UiState(
