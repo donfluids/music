@@ -50,14 +50,14 @@ fun SettingsDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.settings_reference), style = MaterialTheme.typography.labelLarge)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StepButton("−", stringResource(R.string.settings_reference_down), enabled = referenceHz > MIN_REFERENCE_HZ) { onReference(referenceHz - 1) }
+                    StepButton(R.drawable.ic_remove, stringResource(R.string.settings_reference_down), enabled = referenceHz > MIN_REFERENCE_HZ) { onReference(referenceHz - 1) }
                     Text(
                         stringResource(R.string.settings_reference_value, referenceHz),
                         style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = Tabular),
                         textAlign = TextAlign.Center,
                         modifier = Modifier.width(96.dp).semantics { liveRegion = LiveRegionMode.Polite },
                     )
-                    StepButton("+", stringResource(R.string.settings_reference_up), enabled = referenceHz < MAX_REFERENCE_HZ) { onReference(referenceHz + 1) }
+                    StepButton(R.drawable.ic_add, stringResource(R.string.settings_reference_up), enabled = referenceHz < MAX_REFERENCE_HZ) { onReference(referenceHz + 1) }
                     if (referenceHz != 440) TextButton(onClick = { onReference(440) }) { Text(stringResource(R.string.settings_reference_reset)) }
                 }
                 Text(stringResource(R.string.settings_reference_help), style = MaterialTheme.typography.bodySmall, color = muted)
@@ -94,6 +94,7 @@ private fun TwoWay(first: String, second: String, secondSelected: Boolean, onSel
                 selected = secondSelected == (i == 1),
                 onClick = { onSelect(i == 1) },
                 shape = SegmentedButtonDefaults.itemShape(i, 2),
+                colors = segmentColors(),
                 icon = {},
                 modifier = Modifier.weight(1f),
             ) {

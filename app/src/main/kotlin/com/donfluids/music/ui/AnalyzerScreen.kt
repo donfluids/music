@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.annotation.DrawableRes
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
@@ -39,11 +40,16 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -76,12 +82,14 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -231,6 +239,7 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
         bottomBar = {
             BottomBar(
                 listening = state.listening,
+                level = a.level,
                 held = sh.keyHeld,
                 canHold = sh.key != null,
                 onListen = {
@@ -252,6 +261,12 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
                 .padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(SECTION_GAP),
         ) {
+            // Nothing heard yet: say what the app does instead of showing empty readouts.
+            if (!state.listening && a.key == null && a.displayKey == null && a.bpm == null) {
+                if (state.error != null) StatusLine(state, viewModel::stopClip)
+                IdleIntro(state.preset, viewModel::setPreset)
+                return@Column
+            }
             StatusLine(state, viewModel::stopClip)
             // What the player reads at a glance.
             Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
@@ -310,8 +325,13 @@ private fun PresetMenu(selected: AnalysisPreset, onSelect: (AnalysisPreset) -> U
     var open by remember { mutableStateOf(false) }
     val description = stringResource(R.string.preset_menu)
     Box {
-        TextButton(onClick = { open = true }, modifier = Modifier.semantics { contentDescription = "$description: ${selected.title}" }) {
-            Text("${selected.title} ▾", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.clearAndSetSemantics { })
+        TextButton(
+            onClick = { open = true },
+            contentPadding = PaddingValues(start = 12.dp, end = 4.dp),
+            modifier = Modifier.semantics { contentDescription = "$description: ${selected.title}" },
+        ) {
+            Text(selected.title, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.clearAndSetSemantics { })
+            Icon(painterResource(R.drawable.ic_arrow_drop_down), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             AnalysisPreset.ALL.forEach { preset ->
@@ -329,30 +349,16 @@ private fun PresetMenu(selected: AnalysisPreset, onSelect: (AnalysisPreset) -> U
     }
 }
 
-/** A drawn sun or moon, so it renders the same on every phone and has a real accessible name. */
+/** A sun in dark mode (switch to light) or a moon in light mode (switch to dark). */
 @Composable
 private fun ThemeToggle(dark: Boolean, onToggle: () -> Unit) {
     val description = stringResource(if (dark) R.string.theme_to_light else R.string.theme_to_dark)
-    val colour = MaterialTheme.colorScheme.onSurfaceVariant
-    val ground = MaterialTheme.colorScheme.background
-    IconButton(onClick = onToggle, modifier = Modifier.semantics { contentDescription = description }) {
-        Canvas(Modifier.size(20.dp)) {
-            val r = size.minDimension / 2
-            if (dark) {
-                // A sun: switch to light.
-                drawCircle(colour, radius = r * 0.55f)
-                for (i in 0 until 8) {
-                    val angle = i * Math.PI / 4
-                    val from = Offset(center.x + (r * 0.75f * Math.cos(angle)).toFloat(), center.y + (r * 0.75f * Math.sin(angle)).toFloat())
-                    val to = Offset(center.x + (r * Math.cos(angle)).toFloat(), center.y + (r * Math.sin(angle)).toFloat())
-                    drawLine(colour, from, to, strokeWidth = 2.dp.toPx())
-                }
-            } else {
-                // A crescent moon: a disc with a background-coloured disc bitten out of it.
-                drawCircle(colour, radius = r * 0.8f)
-                drawCircle(ground, radius = r * 0.7f, center = Offset(center.x + r * 0.45f, center.y - r * 0.3f))
-            }
-        }
+    IconButton(onClick = onToggle) {
+        Icon(
+            painterResource(if (dark) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
+            contentDescription = description,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -371,30 +377,29 @@ private fun OverflowMenu(
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val description = stringResource(R.string.more)
-    val colour = MaterialTheme.colorScheme.onSurfaceVariant
+    val icon: (Int) -> @Composable () -> Unit = { res -> { Icon(painterResource(res), contentDescription = null) } }
     Box {
-        IconButton(onClick = { open = true }, modifier = Modifier.semantics { contentDescription = description }) {
-            Canvas(Modifier.size(20.dp)) {
-                val r = 2.dp.toPx()
-                for (i in -1..1) drawCircle(colour, radius = r, center = Offset(center.x, center.y + i * 6.dp.toPx()))
-            }
+        IconButton(onClick = { open = true }) {
+            Icon(painterResource(R.drawable.ic_more_vert), contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(text = { Text(stringResource(R.string.history_title)) }, onClick = { open = false; onHistory() })
-            DropdownMenuItem(text = { Text(stringResource(R.string.settings)) }, onClick = { open = false; onSettings() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.history_title)) }, leadingIcon = icon(R.drawable.ic_history), onClick = { open = false; onHistory() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.settings)) }, leadingIcon = icon(R.drawable.ic_settings), onClick = { open = false; onSettings() })
             HorizontalDivider()
             if (recording) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.stop_clip)) }, onClick = { open = false; onStopClip() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.stop_clip)) }, leadingIcon = icon(R.drawable.ic_stop), onClick = { open = false; onStopClip() })
             } else {
-                DropdownMenuItem(text = { Text(stringResource(R.string.record_clip)) }, enabled = listening, onClick = { open = false; onRecord() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.record_clip)) }, leadingIcon = icon(R.drawable.ic_record), enabled = listening, onClick = { open = false; onRecord() })
             }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.share_clips) + if (clipCount > 0) " ($clipCount)" else "") },
+                leadingIcon = icon(R.drawable.ic_share),
                 enabled = clipCount > 0 && !recording,
                 onClick = { open = false; onShare() },
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.delete_clips)) },
+                leadingIcon = icon(R.drawable.ic_delete),
                 enabled = clipCount > 0 && !recording,
                 onClick = { open = false; confirmDelete = true },
             )
@@ -414,6 +419,7 @@ private fun OverflowMenu(
 @Composable
 private fun BottomBar(
     listening: Boolean,
+    level: Float,
     held: Boolean,
     canHold: Boolean,
     onListen: () -> Unit,
@@ -429,7 +435,7 @@ private fun BottomBar(
         if (listening) {
             // Narrow phones: less side padding, and labels that shrink rather than wrap.
             val pad = PaddingValues(horizontal = 12.dp)
-            OutlinedButton(onClick = onNewSong, contentPadding = pad, modifier = Modifier.weight(1.1f).height(56.dp)) {
+            OutlinedButton(onClick = onNewSong, contentPadding = pad, modifier = Modifier.weight(1f).height(56.dp)) {
                 BarLabel(stringResource(R.string.new_song))
             }
             if (held) {
@@ -441,13 +447,35 @@ private fun BottomBar(
                     BarLabel(stringResource(R.string.hold))
                 }
             }
-            OutlinedButton(onClick = onStop, contentPadding = pad, modifier = Modifier.weight(0.8f).height(56.dp)) {
-                BarLabel(stringResource(R.string.stop))
-            }
+            StopButton(level, onStop)
         } else {
             Button(onClick = onListen, modifier = Modifier.weight(1f).height(56.dp)) {
+                Icon(painterResource(R.drawable.ic_mic), contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.listen), style = MaterialTheme.typography.titleMedium)
             }
+        }
+    }
+}
+
+/**
+ * Round stop button with a ring that swells with the sound coming in, so it is plain the
+ * microphone is hearing something (and plain when it hears nothing).
+ */
+@Composable
+private fun StopButton(level: Float, onStop: () -> Unit) {
+    val ring = MaterialTheme.colorScheme.primary
+    val description = stringResource(R.string.stop_listening)
+    val l = level.coerceIn(0f, 1f)
+    // The ring grows from just outside the button to the edge of this box, never past it.
+    Box(Modifier.size(60.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.matchParentSize().clearAndSetSemantics { }) {
+            val stroke = 3.dp.toPx()
+            val r = 25.dp.toPx() + l * (size.minDimension / 2 - stroke / 2 - 25.dp.toPx())
+            drawCircle(ring.copy(alpha = 0.3f + 0.6f * l), radius = r, style = Stroke(stroke))
+        }
+        FilledTonalIconButton(onClick = onStop, modifier = Modifier.size(48.dp)) {
+            Icon(painterResource(R.drawable.ic_stop), contentDescription = description)
         }
     }
 }
@@ -496,7 +524,7 @@ private fun StatusLine(state: UiState, onStopClip: () -> Unit) {
                 )
             }
             a.key != null || a.bpm != null -> Text(stringResource(R.string.stopped_last_result), style = MaterialTheme.typography.bodyMedium, color = muted, modifier = Modifier.weight(1f))
-            else -> Text(stringResource(R.string.idle_hint), style = MaterialTheme.typography.bodyMedium, color = muted, modifier = Modifier.weight(1f))
+            else -> Spacer(Modifier.weight(1f))
         }
         if (state.recording) {
             Row(
@@ -517,6 +545,62 @@ private fun StatusLine(state: UiState, onStopClip: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/** Before the first Listen: what the app does in three steps, and which kind of music it is set for. */
+@Composable
+private fun IdleIntro(preset: AnalysisPreset, onPreset: (AnalysisPreset) -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val beat = preset.readsBeat
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Box(Modifier.size(88.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+            Icon(painterResource(R.drawable.ic_graphic_eq), contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(44.dp))
+        }
+        Text(
+            stringResource(if (beat) R.string.idle_title_beat else R.string.idle_title_voices),
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { heading() },
+        )
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        IdleStep(1, stringResource(R.string.idle_step_1))
+        IdleStep(2, stringResource(if (beat) R.string.idle_step_2_beat else R.string.idle_step_2_voices))
+        IdleStep(3, stringResource(if (beat) R.string.idle_step_3_beat else R.string.idle_step_3_voices))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.idle_mode), style = MaterialTheme.typography.labelLarge, color = muted)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().height(40.dp)) {
+            AnalysisPreset.ALL.forEachIndexed { i, p ->
+                SegmentedButton(
+                    selected = p == preset,
+                    onClick = { onPreset(p) },
+                    shape = SegmentedButtonDefaults.itemShape(i, AnalysisPreset.ALL.size),
+                    colors = segmentColors(),
+                    icon = {},
+                    modifier = Modifier.weight(1f),
+                ) { Text(p.title, maxLines = 1, softWrap = false) }
+            }
+        }
+        Text(preset.description, style = MaterialTheme.typography.bodySmall, color = muted)
+    }
+}
+
+/** The chosen segment in light teal, so a choice reads at a glance against the warm neutrals. */
+@Composable
+internal fun segmentColors() = SegmentedButtonDefaults.colors(
+    activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
+    activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+)
+
+@Composable
+private fun IdleStep(number: Int, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(Modifier.size(28.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text(number.toString(), style = MaterialTheme.typography.labelLarge, modifier = Modifier.clearAndSetSemantics { })
+        }
+        Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
     }
 }
 
@@ -893,14 +977,14 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.transpose), style = MaterialTheme.typography.labelLarge, color = muted, modifier = Modifier.weight(1f))
-            StepButton("−", stringResource(R.string.transpose_down), enabled = sh.transpose > -6) { onTranspose(sh.transpose - 1) }
+            StepButton(R.drawable.ic_remove, stringResource(R.string.transpose_down), enabled = sh.transpose > -6) { onTranspose(sh.transpose - 1) }
             Text(
                 String.format(Locale.ROOT, "%+d", sh.transpose),
                 style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = Tabular),
                 modifier = Modifier.width(32.dp),
                 textAlign = TextAlign.Center,
             )
-            StepButton("+", stringResource(R.string.transpose_up), enabled = sh.transpose < 6) { onTranspose(sh.transpose + 1) }
+            StepButton(R.drawable.ic_add, stringResource(R.string.transpose_up), enabled = sh.transpose < 6) { onTranspose(sh.transpose + 1) }
         }
         if (sh.transpose != 0) {
             Text(stringResource(R.string.transpose_play, sh.label(sounding), sh.label(key), sh.transpose), style = MaterialTheme.typography.bodySmall, color = muted)
@@ -909,14 +993,14 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit) {
 }
 
 @Composable
-internal fun StepButton(glyph: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun StepButton(@DrawableRes icon: Int, description: String, enabled: Boolean, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier.size(40.dp).semantics { contentDescription = description },
         contentPadding = PaddingValues(0.dp),
     ) {
-        Text(glyph, style = MaterialTheme.typography.titleMedium, modifier = Modifier.clearAndSetSemantics { })
+        Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -1024,7 +1108,12 @@ private fun Details(a: AnalysisResult, sh: Shown, showMeter: Boolean = true) {
         ) {
             Text(stringResource(R.string.details), style = MaterialTheme.typography.labelMedium, color = muted)
             Spacer(Modifier.weight(1f))
-            Text(if (open) "▴" else "▾", color = muted, modifier = Modifier.clearAndSetSemantics { })
+            Icon(
+                painterResource(R.drawable.ic_keyboard_arrow_down),
+                contentDescription = null,
+                tint = muted,
+                modifier = Modifier.graphicsLayer { rotationZ = if (open) 180f else 0f },
+            )
         }
         AnimatedVisibility(open) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(bottom = 8.dp)) {
