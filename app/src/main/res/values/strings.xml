@@ -12,6 +12,7 @@
     <string name="label_chord">chord now</string>
     <string name="label_bpm">bpm</string>
     <string name="label_pitch">pitch</string>
+    <string name="label_pitch_ref">pitch, A%1$d</string>
     <string name="sub_in_tune">in tune</string>
     <string name="sub_sharp">sharp</string>
     <string name="sub_flat">flat</string>
@@ -64,9 +65,9 @@
     <string name="unknown">unknown</string>
     <string name="tuning">Tuning</string>
     <string name="tuning_unknown">–</string>
-    <string name="tuning_in_tune">in tune with A = 440 Hz</string>
-    <string name="tuning_sharp">%1$d cents sharp of A = 440 Hz</string>
-    <string name="tuning_flat">%1$d cents flat of A = 440 Hz</string>
+    <string name="tuning_in_tune">in tune with A = %1$d Hz</string>
+    <string name="tuning_sharp">%1$d cents sharp of A = %2$d Hz</string>
+    <string name="tuning_flat">%1$d cents flat of A = %2$d Hz</string>
     <string name="key_from_notes">Key from notes</string>
     <string name="key_from_chords">Key from chords</string>
     <string name="also">also %1$s</string>
@@ -100,4 +101,32 @@
     <string name="clip_notice_accept">Understood</string>
     <string name="chord_playing">%1$s, playing now</string>
     <string name="hero_description">%1$s: %2$s, confidence %3$d percent</string>
+    <string name="settings">Settings</string>
+    <string name="settings_reference">Tuning reference</string>
+    <string name="settings_reference_value">A = %1$d Hz</string>
+    <string name="settings_reference_down">Lower the reference by 1 Hz</string>
+    <string name="settings_reference_up">Raise the reference by 1 Hz</string>
+    <string name="settings_reference_reset">Reset</string>
+    <string name="settings_reference_help">The A your band tunes to. Sharp and flat are counted from it. Keys are found the same way whatever it is set to.</string>
+    <string name="settings_naming">Note names</string>
+    <string name="naming_letters">C D E</string>
+    <string name="naming_do_re_mi">Do Re Mi</string>
+    <string name="settings_naming_help">Do Re Mi uses fixed Do: C is always Do.</string>
+    <string name="done">Done</string>
+    <string name="back">Back</string>
+    <string name="history_title">Song history</string>
+    <string name="history_share">Share</string>
+    <string name="history_clear">Clear</string>
+    <string name="history_share_title">Songs heard with LiveKey</string>
+    <string name="history_empty">Each song is saved here when you press New song or Stop, once LiveKey has found its key. The list stays on this phone.</string>
+    <string name="history_today">Today</string>
+    <string name="history_yesterday">Yesterday</string>
+    <string name="history_bpm">%1$d bpm</string>
+    <string name="history_bpm_tapped">%1$d bpm, tapped</string>
+    <string name="history_played_in">played in %1$s (%2$+d)</string>
+    <string name="history_deleted">Deleted %1$s</string>
+    <string name="undo">Undo</string>
+    <string name="history_delete_one">Delete %1$s at %2$s</string>
+    <string name="history_clear_title">Clear the song history?</string>
+    <string name="history_clear_text">This removes every saved song from the list. Lists you have already shared are not affected.</string>
 </resources>

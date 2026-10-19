@@ -100,12 +100,14 @@ import com.donfluids.music.dsp.KeyLevelTracker
 import com.donfluids.music.music.ChordLabel
 import com.donfluids.music.music.ChordQuality
 import com.donfluids.music.music.Key
+import com.donfluids.music.music.NoteNaming
 import com.donfluids.music.music.Notes
 import com.donfluids.music.ui.theme.Tabular
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
+import kotlin.math.ln
 import kotlin.math.roundToInt
 
 /** Everything the screen shows, after Hold and transposition have been applied. */
@@ -129,8 +131,16 @@ private class Shown(
     val chord: ChordLabel?,
     val transpose: Int,
     val nashville: Boolean,
+    val naming: NoteNaming,
+    /** Cents sharp (+) or flat (-) of the band's reference A, not of 440. */
+    val tuningCents: Float,
+    val referenceHz: Int,
 ) {
-    fun chordName(c: ChordLabel): String = if (nashville && key != null) c.nashvilleIn(key) else c.name(key)
+    fun chordName(c: ChordLabel): String = if (nashville && key != null) c.nashvilleIn(key) else naming.chord(c, key)
+
+    fun name(k: Key): String = naming.name(k)
+
+    fun label(k: Key): String = naming.label(k)
 }
 
 private fun shown(s: UiState): Shown {
@@ -151,8 +161,14 @@ private fun shown(s: UiState): Shown {
         chord = a.currentChord?.transposed(s.transpose),
         transpose = s.transpose,
         nashville = s.nashville,
+        naming = s.naming,
+        tuningCents = a.tuningCents - centsAbove440(s.referenceHz),
+        referenceHz = s.referenceHz,
     )
 }
+
+/** How far [hz] sits above A = 440 Hz, in cents. */
+private fun centsAbove440(hz: Int): Float = (1200.0 * ln(hz / 440.0) / ln(2.0)).toFloat()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -173,6 +189,18 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
     val a = state.analysis
     val sh = shown(state)
 
+    if (state.showHistory) {
+        HistoryScreen(
+            songs = state.history,
+            naming = state.naming,
+            onClose = { viewModel.showHistory(false) },
+            onDelete = viewModel::deleteSong,
+            onRestore = viewModel::restoreSong,
+            onClear = viewModel::clearHistory,
+        )
+        return
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -190,6 +218,8 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
                         onStopClip = viewModel::stopClip,
                         onShare = viewModel::shareClips,
                         onDelete = viewModel::deleteClips,
+                        onHistory = { viewModel.showHistory(true) },
+                        onSettings = { viewModel.showSettings(true) },
                     )
                 },
             )
@@ -223,7 +253,7 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
             // Drums and strums give a pulse to read; singing alone rarely does, so for voices the
             // row shows how far off pitch the singers are and a tempo the player taps in.
             if (state.preset.readsBeat) TempoAndTimeRow(a, state.tempoMultiplier, state.listening, viewModel::setTempoMultiplier)
-            else PitchAndTapRow(a, state, viewModel::tapBeat, viewModel::clearTapTempo)
+            else PitchAndTapRow(a, sh, state, viewModel::tapBeat, viewModel::clearTapTempo)
             HintLines(sh, a, showTuning = state.preset.readsBeat)
             sh.key?.let { key ->
                 TransposeRow(sh, viewModel::setTranspose, viewModel::setNashville)
@@ -237,6 +267,15 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
 
     state.clipAwaitingLabels?.let { LabelDialog(onSave = viewModel::saveLabels, onSkip = viewModel::skipLabels) }
     if (state.clipNoticePending) ClipNoticeDialog(onAccept = viewModel::acceptClipNotice, onDismiss = viewModel::dismissClipNotice)
+    if (state.showSettings) {
+        SettingsDialog(
+            referenceHz = state.referenceHz,
+            naming = state.naming,
+            onReference = viewModel::setReferenceHz,
+            onNaming = viewModel::setNaming,
+            onDone = { viewModel.showSettings(false) },
+        )
+    }
 
     val shareTitle = stringResource(R.string.share_clips_title)
     LaunchedEffect(state.shareFile) {
@@ -314,6 +353,8 @@ private fun OverflowMenu(
     onStopClip: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
+    onHistory: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -327,6 +368,9 @@ private fun OverflowMenu(
             }
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(stringResource(R.string.history_title)) }, onClick = { open = false; onHistory() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.settings)) }, onClick = { open = false; onSettings() })
+            HorizontalDivider()
             if (recording) {
                 DropdownMenuItem(text = { Text(stringResource(R.string.stop_clip)) }, onClick = { open = false; onStopClip() })
             } else {
@@ -455,13 +499,13 @@ private fun StatusLine(state: UiState, onStopClip: () -> Unit) {
 private fun KeyAndChordRow(sh: Shown) {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Bottom) {
         HeroValue(
-            value = sh.key?.name ?: "–",
+            value = sh.key?.let { sh.name(it) } ?: "–",
             sub = when {
                 sh.keyHeld && sh.key != null -> sh.key.mode.label + " · " + stringResource(R.string.sub_held)
                 // Singers who have wandered: the big key is the centre, and this says where they are now.
-                sh.key != null && sh.now != null -> stringResource(R.string.sub_now, sh.key.mode.label, sh.now.name)
+                sh.key != null && sh.now != null -> stringResource(R.string.sub_now, sh.key.mode.label, sh.name(sh.now))
                 sh.key != null && sh.bestGuess -> stringResource(R.string.sub_best_guess, sh.key.mode.label)
-                sh.key != null && sh.orRelative != null -> stringResource(R.string.sub_or_relative, sh.key.mode.label, sh.orRelative.label)
+                sh.key != null && sh.orRelative != null -> stringResource(R.string.sub_or_relative, sh.key.mode.label, sh.label(sh.orRelative))
                 sh.key != null -> sh.key.mode.label
                 else -> null
             },
@@ -482,18 +526,18 @@ private fun KeyAndChordRow(sh: Shown) {
 
 /** Row 2 for singing: how far off pitch the singers are, and a tempo the player taps in. */
 @Composable
-private fun PitchAndTapRow(a: AnalysisResult, state: UiState, onTap: () -> Unit, onClear: () -> Unit) {
+private fun PitchAndTapRow(a: AnalysisResult, sh: Shown, state: UiState, onTap: () -> Unit, onClear: () -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-        PitchCell(a, Modifier.weight(1f))
+        PitchCell(a, sh, Modifier.weight(1f))
         TapCell(state, onTap, onClear, Modifier.weight(1f))
     }
 }
 
 /** Cents sharp or flat of the key the singers are in now, as a number and a tuner needle. */
 @Composable
-private fun PitchCell(a: AnalysisResult, modifier: Modifier) {
+private fun PitchCell(a: AnalysisResult, sh: Shown, modifier: Modifier) {
     val known = a.sungNotes.size >= 4 || a.tuningConfidence >= 0.2f
-    val cents = a.tuningCents.roundToInt()
+    val cents = sh.tuningCents.roundToInt()
     val sub = when {
         !known -> null
         abs(cents) < IN_TUNE_CENTS -> stringResource(R.string.sub_in_tune)
@@ -505,7 +549,8 @@ private fun PitchCell(a: AnalysisResult, modifier: Modifier) {
         HeroValue(
             value = if (known) signedCents(cents) else "–",
             sub = sub,
-            label = stringResource(R.string.label_pitch),
+            // The reference is named whenever it is not the usual one, so a forgotten 442 is visible.
+            label = if (sh.referenceHz == 440) stringResource(R.string.label_pitch) else stringResource(R.string.label_pitch_ref, sh.referenceHz),
             confidence = if (known) 1f else 0f,
             showBar = false,
         )
@@ -693,21 +738,21 @@ private fun HintLines(sh: Shown, a: AnalysisResult, showTuning: Boolean = true) 
     val other = if (a.displayKeyFromChords) a.key?.takeIf { it != a.displayKey } else a.songKey?.takeIf { it != a.displayKey }
     val lines = buildList {
         if (!sh.keyHeld && other != null) {
-            val name = other.transposed(sh.transpose).label
+            val name = sh.label(other.transposed(sh.transpose))
             add(if (a.displayKeyFromChords) stringResource(R.string.hint_notes_suggest, name) else stringResource(R.string.hint_chords_suggest, name))
         }
         if (sh.key != null && sh.orRelative != null && a.secondsHeard >= 4f) {
-            add(stringResource(R.string.hint_major_or_minor, sh.key.label, sh.orRelative.label))
+            add(stringResource(R.string.hint_major_or_minor, sh.label(sh.key), sh.label(sh.orRelative)))
         }
         if (sh.key != null && !sh.keyHeld) {
             val now = (a.keyNow ?: a.displayKey)?.transposed(sh.transpose)
             val low = a.keyRangeLow?.transposed(sh.transpose)
             val high = a.keyRangeHigh?.transposed(sh.transpose)
             when {
-                a.keyMove == KeyLevelTracker.Move.SETTLED && sh.now != null -> add(stringResource(R.string.hint_settled, sh.now.label))
-                a.keyMove == KeyLevelTracker.Move.RISING && now != null -> add(stringResource(R.string.hint_rising, now.label))
-                a.keyMove == KeyLevelTracker.Move.FALLING && now != null -> add(stringResource(R.string.hint_falling, now.label))
-                low != null && high != null && low != high -> add(stringResource(R.string.hint_wandering, low.name, high.name, sh.key.label))
+                a.keyMove == KeyLevelTracker.Move.SETTLED && sh.now != null -> add(stringResource(R.string.hint_settled, sh.label(sh.now)))
+                a.keyMove == KeyLevelTracker.Move.RISING && now != null -> add(stringResource(R.string.hint_rising, sh.label(now)))
+                a.keyMove == KeyLevelTracker.Move.FALLING && now != null -> add(stringResource(R.string.hint_falling, sh.label(now)))
+                low != null && high != null && low != high -> add(stringResource(R.string.hint_wandering, sh.name(low), sh.name(high), sh.label(sh.key)))
             }
         }
         if (sh.key != null && sh.bestGuess && a.secondsHeard >= 4f) {
@@ -716,7 +761,7 @@ private fun HintLines(sh: Shown, a: AnalysisResult, showTuning: Boolean = true) 
         }
         // How far the singers sit from the key they are in now. A whole semitone or more of
         // wandering shows as "now" instead.
-        val cents = a.tuningCents.roundToInt()
+        val cents = sh.tuningCents.roundToInt()
         if (showTuning && a.tuningConfidence >= 0.2f && abs(cents) >= 25) {
             add(if (cents > 0) stringResource(R.string.hint_tuning_sharp, cents) else stringResource(R.string.hint_tuning_flat, -cents))
         }
@@ -818,7 +863,7 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit, onNashville: (Bo
         Spacer(Modifier.weight(1f))
         SingleChoiceSegmentedButtonRow(Modifier.height(36.dp)) {
             SegmentedButton(selected = !sh.nashville, onClick = { onNashville(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
-                Text(stringResource(R.string.letters), style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(if (sh.naming == NoteNaming.FIXED_DO) R.string.naming_do_re_mi else R.string.letters), style = MaterialTheme.typography.labelMedium)
             }
             SegmentedButton(selected = sh.nashville, onClick = { onNashville(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) {
                 Text(stringResource(R.string.numbers), style = MaterialTheme.typography.labelMedium)
@@ -827,7 +872,7 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit, onNashville: (Bo
     }
     if (sh.transpose != 0) {
         Text(
-            stringResource(R.string.transpose_play, sounding.label, key.label, sh.transpose),
+            stringResource(R.string.transpose_play, sh.label(sounding), sh.label(key), sh.transpose),
             style = MaterialTheme.typography.bodySmall,
             color = muted,
         )
@@ -835,7 +880,7 @@ private fun TransposeRow(sh: Shown, onTranspose: (Int) -> Unit, onNashville: (Bo
 }
 
 @Composable
-private fun StepButton(glyph: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun StepButton(glyph: String, description: String, enabled: Boolean, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
@@ -852,7 +897,7 @@ private fun ChordsInKey(key: Key, sh: Shown) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         key.chords.forEachIndexed { i, chord ->
             val playing = now != null && now.root == key.scale[i] && now.minor == (chord.quality == ChordQuality.MINOR)
-            val name = if (sh.nashville) (i + 1).toString() + chord.quality.suffix else chord.name
+            val name = if (sh.nashville) (i + 1).toString() + chord.quality.suffix else sh.naming.of(chord.name)
             val description = if (playing) stringResource(R.string.chord_playing, name) else name
             Column(
                 Modifier
@@ -869,13 +914,18 @@ private fun ChordsInKey(key: Key, sh: Shown) {
                     .semantics(mergeDescendants = true) { selected = playing; contentDescription = description },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
+                // Shrinks for "Sol#m" and the like, which are wider than a seventh of the screen.
+                BasicText(
                     name,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = if (playing) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        color = if (playing) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center,
+                    ),
                     maxLines = 1,
                     softWrap = false,
-                    overflow = TextOverflow.Visible,
+                    overflow = TextOverflow.Clip,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = 22.sp, stepSize = 1.sp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                 )
                 Text(chord.numeral, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -909,6 +959,7 @@ private fun ChordTimeline(a: AnalysisResult, sh: Shown) {
 
 @Composable
 private fun Details(a: AnalysisResult, sh: Shown, showMeter: Boolean = true) {
+    val ref = sh.referenceHz
     var open by rememberSaveable { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val expanded = stringResource(R.string.details_expanded)
@@ -930,41 +981,41 @@ private fun Details(a: AnalysisResult, sh: Shown, showMeter: Boolean = true) {
         AnimatedVisibility(open) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(bottom = 8.dp)) {
                 DetailRow(stringResource(R.string.tuning)) {
-                    val cents = a.tuningCents.roundToInt()
+                    val cents = sh.tuningCents.roundToInt()
                     Text(
                         when {
                             a.tuningConfidence < 0.2f -> stringResource(R.string.tuning_unknown)
-                            abs(cents) < 10 -> stringResource(R.string.tuning_in_tune)
-                            cents > 0 -> stringResource(R.string.tuning_sharp, cents)
-                            else -> stringResource(R.string.tuning_flat, -cents)
+                            abs(cents) < 10 -> stringResource(R.string.tuning_in_tune, ref)
+                            cents > 0 -> stringResource(R.string.tuning_sharp, cents, ref)
+                            else -> stringResource(R.string.tuning_flat, -cents, ref)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
                 DetailRow(stringResource(R.string.key_from_notes)) {
-                    Text(a.key?.let { "${it.transposed(sh.transpose).label} · ${pct(a.keyConfidence)}" } ?: "–", style = MaterialTheme.typography.bodyMedium)
+                    Text(a.key?.let { "${sh.label(it.transposed(sh.transpose))} · ${pct(a.keyConfidence)}" } ?: "–", style = MaterialTheme.typography.bodyMedium)
                     if (a.keyAlternatives.isNotEmpty()) {
-                        Text(stringResource(R.string.also, a.keyAlternatives.joinToString(", ") { it.first.transposed(sh.transpose).label }), style = MaterialTheme.typography.bodySmall, color = muted)
+                        Text(stringResource(R.string.also, a.keyAlternatives.joinToString(", ") { sh.label(it.first.transposed(sh.transpose)) }), style = MaterialTheme.typography.bodySmall, color = muted)
                     }
                 }
                 DetailRow(stringResource(R.string.key_from_chords)) {
                     val k = a.songKey
-                    Text(k?.let { "${it.transposed(sh.transpose).label} · ${pct(a.songKeyConfidence)}" } ?: "–", style = MaterialTheme.typography.bodyMedium)
+                    Text(k?.let { "${sh.label(it.transposed(sh.transpose))} · ${pct(a.songKeyConfidence)}" } ?: "–", style = MaterialTheme.typography.bodyMedium)
                     if (k != null) {
                         val parts = buildList {
                             if (a.songKeyCadences > 0) add(pluralStringResource(R.plurals.cadences, a.songKeyCadences, a.songKeyCadences))
-                            a.songKeyAlternative?.let { add(stringResource(R.string.or_key, it.transposed(sh.transpose).label)) }
+                            a.songKeyAlternative?.let { add(stringResource(R.string.or_key, sh.label(it.transposed(sh.transpose)))) }
                         }
                         if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = muted)
                         val shownKey = k.transposed(sh.transpose)
                         Text(
-                            a.chordShares.take(6).joinToString("  ") { (c, share) -> "${c.transposed(sh.transpose).name(shownKey)} ${c.numeralIn(k)} ${(share * 100).roundToInt()}%" },
+                            a.chordShares.take(6).joinToString("  ") { (c, share) -> "${sh.naming.chord(c.transposed(sh.transpose), shownKey)} ${c.numeralIn(k)} ${(share * 100).roundToInt()}%" },
                             style = MaterialTheme.typography.bodySmall,
                             color = muted,
                         )
                     }
                 }
-                DetailRow(stringResource(R.string.notes_heard)) { ChromaBars(a.chroma, sh.key?.transposed(-sh.transpose)) }
+                DetailRow(stringResource(R.string.notes_heard)) { ChromaBars(a.chroma, sh.key?.transposed(-sh.transpose), sh.naming) }
                 if (showMeter && a.meterScores.isNotEmpty()) {
                     DetailRow(stringResource(R.string.bar_length)) {
                         a.meterScores.entries.sortedByDescending { it.value }.take(4).forEach { (beats, score) ->
@@ -998,7 +1049,7 @@ private fun DetailRow(label: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ChromaBars(chroma: List<Float>, key: Key?) {
+private fun ChromaBars(chroma: List<Float>, key: Key?, naming: NoteNaming) {
     val inScale = key?.scale?.toSet() ?: emptySet()
     val primary = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.outline
@@ -1019,7 +1070,7 @@ private fun ChromaBars(chroma: List<Float>, key: Key?) {
         Row(Modifier.fillMaxWidth()) {
             for (i in 0 until 12) {
                 Text(
-                    Notes.neutral(i),
+                    naming.of(Notes.neutral(i)),
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelSmall,
