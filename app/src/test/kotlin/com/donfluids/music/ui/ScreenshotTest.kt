@@ -10,13 +10,17 @@ import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
 import com.donfluids.music.dsp.KeyLevelTracker
 import com.donfluids.music.dsp.SungNote
+import com.donfluids.music.history.SongRecord
 import com.donfluids.music.music.ChordLabel
 import com.donfluids.music.music.ChordType
 import com.donfluids.music.music.ChordSegment
 import com.donfluids.music.music.Key
 import com.donfluids.music.music.Mode
+import com.donfluids.music.music.NoteNaming
 import com.donfluids.music.ui.theme.LiveKeyTheme
+import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.github.takahirom.roborazzi.captureScreenRoboImage
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -37,6 +41,7 @@ class ScreenshotTest {
     private val notes = List(12) { SungNote(64 + it % 5, it * 0.5, 0.45) }
     private fun chord(root: Int, type: ChordType = ChordType.MAJOR) = ChordLabel(root, type)
 
+    @OptIn(ExperimentalRoborazziApi::class)
     private fun shoot(name: String, state: UiState, dark: Boolean = false) {
         val vm = AnalyzerViewModel(ApplicationProvider.getApplicationContext<Application>())
         vm.showStateForScreenshot(state)
@@ -45,7 +50,9 @@ class ScreenshotTest {
         compose.mainClock.autoAdvance = false
         compose.setContent { LiveKeyTheme(dark = dark) { AnalyzerScreen(vm, dark = dark) } }
         compose.mainClock.advanceTimeBy(400)
-        compose.onRoot().captureRoboImage("build/screenshots/$name.png")
+        // A dialog is a window of its own, so the whole screen is captured when one is open.
+        if (state.showSettings) captureScreenRoboImage("build/screenshots/$name.png")
+        else compose.onRoot().captureRoboImage("build/screenshots/$name.png")
     }
 
     private val eMajor = Key(4, Mode.MAJOR)
@@ -64,6 +71,24 @@ class ScreenshotTest {
     @Test fun voicesSettledDark() = shoot("5-voices-settled-dark", voicesSettled, dark = true)
 
     @Test fun voicesTapping() = shoot("6-voices-tapping", voicesSettled.copy(tapBpm = 92f, tapCount = 2))
+
+    @Test fun fixedDoAt442() = shoot("7-voices-do-re-mi-442", voicesSettled.copy(naming = NoteNaming.FIXED_DO, referenceHz = 442, transpose = 0))
+
+    @Test fun settings() = shoot("8-settings", voicesSettled.copy(showSettings = true, referenceHz = 442))
+
+    @Test fun history() {
+        val now = System.currentTimeMillis()
+        val day = 86_400_000L
+        shoot("9-history", UiState(
+            showHistory = true,
+            history = listOf(
+                SongRecord(now - 600_000, Key(7, Mode.MAJOR), bpm = 72, bpmTapped = true, seconds = 245, presetId = "voices"),
+                SongRecord(now - 1_500_000, Key(4, Mode.MINOR), transpose = 2, bpm = 124, meter = "4/4", seconds = 198, presetId = "band"),
+                SongRecord(now - day, Key(10, Mode.MAJOR), bpm = 96, meter = "6/8", seconds = 312, presetId = "band"),
+                SongRecord(now - day - 900_000, Key(2, Mode.MAJOR), seconds = 180, presetId = "voices"),
+            ),
+        ))
+    }
 
     @Test fun voicesWandering() {
         val cs = Key(1, Mode.MAJOR)

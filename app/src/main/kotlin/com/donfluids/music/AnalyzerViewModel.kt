@@ -13,13 +13,19 @@ import com.donfluids.music.audio.ClipStore
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
 import com.donfluids.music.dsp.MusicAnalyzer
+import com.donfluids.music.history.SongHistory
+import com.donfluids.music.history.SongRecord
 import com.donfluids.music.music.Key
+import com.donfluids.music.music.NoteNaming
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
@@ -53,7 +59,18 @@ data class UiState(
     val tapAnchorNanos: Long = 0L,
     /** Taps in the current count, so the screen can ask for a few more. */
     val tapCount: Int = 0,
+    /** The A the band tunes to, in Hz; "in tune" is measured from it. */
+    val referenceHz: Int = 440,
+    val naming: NoteNaming = NoteNaming.LETTERS,
+    /** Songs heard, newest first, saved on the phone. */
+    val history: List<SongRecord> = emptyList(),
+    val showHistory: Boolean = false,
+    val showSettings: Boolean = false,
 )
+
+/** The range of the tuning reference, in Hz. */
+const val MIN_REFERENCE_HZ = 430
+const val MAX_REFERENCE_HZ = 450
 
 /**
  * Owns the microphone session. Threading rules: the audio thread reads [analyzer] and
@@ -71,6 +88,8 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             preset = AnalysisPreset.byId(prefs.getString(PREF_PRESET, null)),
             darkTheme = if (prefs.contains(PREF_DARK)) prefs.getBoolean(PREF_DARK, false) else null,
             nashville = prefs.getBoolean(PREF_NASHVILLE, false),
+            referenceHz = prefs.getInt(PREF_REFERENCE, 440).coerceIn(MIN_REFERENCE_HZ, MAX_REFERENCE_HZ),
+            naming = NoteNaming.byId(prefs.getString(PREF_NAMING, null)),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -82,6 +101,17 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     private var session: Session? = null
     private val analyzer: MusicAnalyzer? get() = session?.analyzer
     private val recorder = AtomicReference<ClipRecorder?>(null)
+
+    private val history = SongHistory(File(application.filesDir, "history.json"))
+    /**
+     * One thread for every history read and write, so they happen in order. Not tied to the
+     * ViewModel: the song saved as the screen closes must still reach the file.
+     */
+    private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val historyLoaded = historyScope.launch {
+        val songs = runCatching { history.all() }.getOrDefault(emptyList())
+        _state.update { it.copy(history = songs) }
+    }
     @Volatile private var lastReportedSecond = -1
 
     /** The microphone is released whenever the app leaves the foreground. */
@@ -143,6 +173,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         if (session !== s) return
         session = null
         recorder.get()?.let { finishClip(it) }
+        saveSong()
         _state.update { it.copy(listening = false, error = message) }
     }
 
@@ -151,13 +182,17 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         session = null
         s.capture.stop() // the audio thread is done before the clip is finished
         recorder.get()?.let { finishClip(it) }
+        saveSong()
         _state.update { it.copy(listening = false, heldKey = null) }
     }
 
     private val tapTempo = TapTempo()
 
     /** For screenshot tests only: shows a prepared state. */
-    internal fun showStateForScreenshot(state: UiState) { _state.value = state }
+    internal fun showStateForScreenshot(state: UiState) {
+        runBlocking { historyLoaded.join() } // so the saved list cannot land on top of this one
+        _state.value = state
+    }
 
     /** A tap on the beat: from the second tap on, the tempo is shown and pulses. */
     fun tapBeat(nowNanos: Long = System.nanoTime()) {
@@ -172,6 +207,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
 
     /** Forget everything heard so far: a fresh analyser replaces the old one, never mutated in place. */
     fun reset() {
+        saveSong()
         clearTapTempo()
         session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, _state.value.preset) }
         recorder.get()?.analysisStartSeconds = 0f // the clip's chord filter follows the new clock
@@ -202,6 +238,53 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, preset) }
         recorder.get()?.analysisStartSeconds = 0f
         _state.update { it.copy(preset = preset, analysis = AnalysisResult(), tempoMultiplier = 1f, heldKey = null, transpose = 0) }
+    }
+
+    // ---- Settings ----
+
+    fun setReferenceHz(hz: Int) {
+        val v = hz.coerceIn(MIN_REFERENCE_HZ, MAX_REFERENCE_HZ)
+        prefs.edit().putInt(PREF_REFERENCE, v).apply()
+        _state.update { it.copy(referenceHz = v) }
+    }
+
+    fun setNaming(naming: NoteNaming) {
+        prefs.edit().putString(PREF_NAMING, naming.id).apply()
+        _state.update { it.copy(naming = naming) }
+    }
+
+    fun showSettings(show: Boolean) {
+        _state.update { it.copy(showSettings = show) }
+    }
+
+    // ---- History ----
+
+    /** Saves the song just heard, if a key was found; called before the analysis is thrown away. */
+    private fun saveSong() {
+        val record = SongRecord.from(_state.value, System.currentTimeMillis()) ?: return
+        historyScope.launch { update { history.add(record) } }
+    }
+
+    fun showHistory(show: Boolean) {
+        _state.update { it.copy(showHistory = show) }
+    }
+
+    fun deleteSong(atMillis: Long) {
+        historyScope.launch { update { history.remove(atMillis) } }
+    }
+
+    fun restoreSong(record: SongRecord) {
+        historyScope.launch { update { history.add(record) } }
+    }
+
+    fun clearHistory() {
+        historyScope.launch { update { history.clear() } }
+    }
+
+    private fun update(change: () -> List<SongRecord>) {
+        runCatching(change)
+            .onSuccess { songs -> _state.update { it.copy(history = songs) } }
+            .onFailure { e -> _state.update { it.copy(error = "Could not save the song list: ${e.message}") } }
     }
 
     fun setTempoMultiplier(multiplier: Float) {
@@ -305,5 +388,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         const val PREF_DARK = "dark"
         const val PREF_NASHVILLE = "nashville"
         const val PREF_CLIP_NOTICE = "clipNoticeAccepted"
+        const val PREF_REFERENCE = "referenceHz"
+        const val PREF_NAMING = "naming"
     }
 }
