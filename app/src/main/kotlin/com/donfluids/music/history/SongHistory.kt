@@ -8,7 +8,7 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
-/** One song as LiveKey heard it. [key] is the concert key; [transpose] is what the player had set. */
+/** One song as KeyCatch heard it. [key] is the concert key; [transpose] is what the player had set. */
 data class SongRecord(
     val atMillis: Long,
     val key: Key,

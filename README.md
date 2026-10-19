@@ -1,4 +1,7 @@
-# LiveKey
+# KeyCatch
+
+The app was called LiveKey during development. The Kotlin package (`com.donfluids.music`)
+and some code names still carry the old name; the app ID is `com.donfluids.keycatch`.
 
 An Android app for the keyboard player who has to join a song that has already started.
 Point the phone at the singing and it reports:

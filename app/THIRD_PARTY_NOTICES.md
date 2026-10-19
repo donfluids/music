@@ -1,6 +1,6 @@
-# Third-party notices (LiveKey)
+# Third-party notices (KeyCatch)
 
-LiveKey ships the following third-party material. The licence texts are bundled in the app
+KeyCatch ships the following third-party material. The licence texts are bundled in the app
 under `assets/licenses/`.
 
 | What | Where in the app | Licence |

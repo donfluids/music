@@ -1,6 +1,6 @@
 # Mini Piano
 
-A small touch piano that lives alongside LiveKey in this repository as the `:piano` module
+A small touch piano that lives alongside KeyCatch in this repository as the `:piano` module
 and installs as its own app (`com.donfluids.piano`).
 
 - Opens in landscape (either way up) showing two octaves of a continuous C1 to B7 keyboard.
@@ -32,7 +32,7 @@ and installs as its own app (`com.donfluids.piano`).
   chord buttons set the band's chord too. When the chord changes, the drummer plays a fill
   through the last beat of the bar and crashes on the next downbeat (at most once every two
   bars; off in settings). Band volume is in settings.
-- **Listen**: tap the ear and sing or play a few bars. The piano runs LiveKey's analyser on
+- **Listen**: tap the ear and sing or play a few bars. The piano runs KeyCatch's analyser on
   the microphone, reads the key, tempo and time signature, and as soon as it is sure it picks
   the style that fits (compound time to Worship 6/8, three to Waltz, a slow four to Worship
   Slow, medium to Pop, driving to 8-Beat Rock, fast to Power Rock), sets the tempo and key,
@@ -51,5 +51,5 @@ and installs as its own app (`com.donfluids.piano`).
 
 ```
 ./gradlew :piano:testDebugUnitTest    # synth and keyboard-layout tests on the JVM
-./gradlew :piano:assembleRelease      # signed with the same keystore.properties as LiveKey
+./gradlew :piano:assembleRelease      # signed with the same keystore.properties as KeyCatch
 ```

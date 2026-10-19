@@ -4,7 +4,7 @@
 
 Source: https://github.com/google/fonts/tree/main/ofl/manrope (`Manrope[wght].ttf`), SIL Open
 Font License 1.1. Three static weights are cut from the variable font and trimmed to the
-characters LiveKey shows, keeping every layout feature (tabular figures included) and the
+characters KeyCatch shows, keeping every layout feature (tabular figures included) and the
 copyright and licence fields:
 
 ```sh

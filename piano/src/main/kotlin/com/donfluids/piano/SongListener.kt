@@ -8,7 +8,7 @@ import com.donfluids.music.dsp.MusicAnalyzer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/** Runs LiveKey's analyser on the microphone and publishes what it hears. */
+/** Runs KeyCatch's analyser on the microphone and publishes what it hears. */
 class SongListener(private val context: Context) {
     private val _result = MutableStateFlow(AnalysisResult())
     val result: StateFlow<AnalysisResult> = _result

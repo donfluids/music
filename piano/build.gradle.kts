@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// Shares the release key with LiveKey when keystore.properties is present; unsigned otherwise.
+// Shares the release key with KeyCatch when keystore.properties is present; unsigned otherwise.
 val keystoreProperties = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
