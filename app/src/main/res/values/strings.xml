@@ -2,17 +2,17 @@
 <resources>
     <string name="app_name">LiveKey</string>
     <string name="listen">Listen</string>
-    <string name="stop">Stop</string>
+    <string name="stop_listening">Stop listening</string>
     <string name="new_song">New song</string>
     <string name="hold">Hold</string>
     <string name="held">Held</string>
     <string name="permission_needed">LiveKey needs the microphone to hear the singing.</string>
     <string name="permission_denied">Microphone permission was denied. Enable it in system settings for LiveKey.</string>
-    <string name="label_key">key</string>
-    <string name="label_chord">chord now</string>
-    <string name="label_bpm">bpm</string>
-    <string name="label_pitch">pitch</string>
-    <string name="label_pitch_ref">pitch, A%1$d</string>
+    <string name="label_key">Key</string>
+    <string name="label_chord">Chord now</string>
+    <string name="label_bpm">BPM</string>
+    <string name="label_pitch">Pitch</string>
+    <string name="label_pitch_ref">Pitch, A%1$d</string>
     <string name="sub_in_tune">in tune</string>
     <string name="sub_cents_sharp">cents sharp</string>
     <string name="sub_cents_flat">cents flat</string>
@@ -22,14 +22,21 @@
     <string name="sub_hold_to_clear">hold to clear</string>
     <string name="tap_action">tap the beat</string>
     <string name="tap_clear">clear the tapped tempo</string>
-    <string name="label_time">time</string>
+    <string name="label_time">Time</string>
     <string name="sub_settling">settling</string>
     <string name="sub_in_threes">in 3s</string>
     <string name="sub_held">held</string>
     <string name="sub_or_relative">%1$s · or %2$s</string>
     <string name="sub_best_guess">%1$s · best guess</string>
     <string name="sub_now">%1$s · now %2$s</string>
-    <string name="idle_hint">Tap Listen and let the song play for a few bars.</string>
+    <string name="idle_title_beat">Hear the key, chords and tempo</string>
+    <string name="idle_title_voices">Hear the key of the singing</string>
+    <string name="idle_step_1">Tap Listen and hold the phone near the music.</string>
+    <string name="idle_step_2_beat">After a few bars, the key, chords and tempo appear.</string>
+    <string name="idle_step_2_voices">After a line or two, the key and the singers\' pitch appear.</string>
+    <string name="idle_step_3_beat">Press Hold to keep the key on screen while you play.</string>
+    <string name="idle_step_3_voices">Tap along to set the tempo. Hold keeps the key on screen.</string>
+    <string name="idle_mode">Listening for</string>
     <string name="stopped_last_result">Stopped · last result</string>
     <string name="listening">Listening</string>
     <string name="details">Details</string>
@@ -38,20 +45,19 @@
     <string name="theme_toggle">Switch light or dark</string>
     <string name="more">More</string>
     <string name="preset_menu">Sound preset</string>
-    <string name="hint_notes_suggest">the notes suggest %1$s</string>
-    <string name="hint_chords_suggest">the chords suggest %1$s</string>
+    <string name="hint_notes_suggest">The notes suggest %1$s</string>
+    <string name="hint_chords_suggest">The chords suggest %1$s</string>
     <string name="hint_major_or_minor">%1$s or %2$s: same notes, listening for which is home</string>
-    <string name="hint_settled">singers have moved to %1$s and are staying there</string>
-    <string name="hint_rising">singers drifting up, now nearest %1$s</string>
-    <string name="hint_falling">singers drifting down, now nearest %1$s</string>
-    <string name="hint_wandering">singers wander between %1$s and %2$s; %3$s keeps you closest</string>
-    <string name="hint_best_guess">still listening: the key is a best guess</string>
-    <string name="hint_best_guess_scattered">notes scattered about %1$d cents: the key is a best guess</string>
-    <string name="hint_tuning_sharp">singing %1$d cents sharp, between two keys</string>
-    <string name="hint_tuning_flat">singing %1$d cents flat, between two keys</string>
+    <string name="hint_settled">Singers have moved to %1$s and are staying there</string>
+    <string name="hint_rising">Singers drifting up, now nearest %1$s</string>
+    <string name="hint_falling">Singers drifting down, now nearest %1$s</string>
+    <string name="hint_wandering">Singers wander between %1$s and %2$s; %3$s keeps you closest</string>
+    <string name="hint_best_guess">Still listening: the key is a best guess</string>
+    <string name="hint_best_guess_scattered">Notes scattered about %1$d cents: the key is a best guess</string>
+    <string name="hint_tuning_sharp">Singing %1$d cents sharp, between two keys</string>
+    <string name="hint_tuning_flat">Singing %1$d cents flat, between two keys</string>
     <string name="transpose">Transpose</string>
-    <string name="transpose_none">sounding key</string>
-    <string name="transpose_play">sounding %1$s · play %2$s (%3$+d)</string>
+    <string name="transpose_play">Sounding %1$s · play %2$s (%3$+d)</string>
     <string name="sub_double">×2</string>
     <string name="sub_half">÷2</string>
     <string name="tap_tempo_feel">feel the tempo as double or half</string>
@@ -63,12 +69,12 @@
     <string name="unknown">unknown</string>
     <string name="tuning">Tuning</string>
     <string name="tuning_unknown">–</string>
-    <string name="tuning_in_tune">in tune with A = %1$d Hz</string>
+    <string name="tuning_in_tune">In tune with A = %1$d Hz</string>
     <string name="tuning_sharp">%1$d cents sharp of A = %2$d Hz</string>
     <string name="tuning_flat">%1$d cents flat of A = %2$d Hz</string>
     <string name="key_from_notes">Key from notes</string>
     <string name="key_from_chords">Key from chords</string>
-    <string name="also">also %1$s</string>
+    <string name="also">Also %1$s</string>
     <string name="or_key">or %1$s</string>
     <plurals name="cadences">
         <item quantity="one">%d V–I cadence</item>
@@ -123,9 +129,9 @@
     <string name="history_empty">Each song is saved here when you press New song or Stop, once LiveKey has found its key. The list stays on this phone.</string>
     <string name="history_today">Today</string>
     <string name="history_yesterday">Yesterday</string>
-    <string name="history_bpm">%1$d bpm</string>
-    <string name="history_bpm_tapped">%1$d bpm, tapped</string>
-    <string name="history_played_in">played in %1$s (%2$+d)</string>
+    <string name="history_bpm">%1$d BPM</string>
+    <string name="history_bpm_tapped">%1$d BPM, tapped</string>
+    <string name="history_played_in">Played in %1$s (%2$+d)</string>
     <string name="history_deleted">Deleted %1$s</string>
     <string name="undo">Undo</string>
     <string name="history_delete_one">Delete %1$s at %2$s</string>
