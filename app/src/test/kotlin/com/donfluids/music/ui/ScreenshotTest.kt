@@ -114,6 +114,10 @@ class ScreenshotTest {
         )
     }
 
+    /** Tall enough to show the whole page in one picture. */
+    @Test @Config(qualifiers = "w360dp-h1700dp-xhdpi")
+    fun limits() = shoot("12-what-to-expect", UiState(showLimits = true))
+
     @Test @Config(qualifiers = "w360dp-h800dp-xhdpi")
     fun smallPhoneSettings() = shoot("11-small-phone-settings", voicesSettled.copy(showSettings = true, referenceHz = 442, nashville = true))
 
