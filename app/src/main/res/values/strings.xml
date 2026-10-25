@@ -137,4 +137,31 @@
     <string name="history_delete_one">Delete %1$s at %2$s</string>
     <string name="history_clear_title">Clear the song history?</string>
     <string name="history_clear_text">This removes every saved song from the list. Lists you have already shared are not affected.</string>
+    <!-- What to expect: the app's limits, in plain words. Each item is a bold lead and a sentence or two. -->
+    <string name="limits_title">What to expect</string>
+    <string name="limits_intro">We built KeyCatch to listen the way a musician does: it hears the notes and chords and makes its best guess at the key. Most of the time that guess is right. Sometimes it isn\'t, and here\'s when to keep an ear out.</string>
+    <string name="limits_wrong_heading">It can get it wrong when…</string>
+    <string name="limits_off_pitch_lead">Singers are off pitch.</string>
+    <string name="limits_off_pitch">If people are singing between notes, KeyCatch has to guess. You\'ll see “best guess” under the key when that\'s happening.</string>
+    <string name="limits_drift_lead">The pitch drifts.</string>
+    <string name="limits_drift">Groups often creep sharp or flat through a long song. KeyCatch follows them, but it can fall behind or settle on the key next door.</string>
+    <string name="limits_key_change_lead">The song changes key.</string>
+    <string name="limits_key_change">A lift for the last chorus takes a few seconds to catch. When a new song starts, press New song so the old one doesn\'t get in the way.</string>
+    <string name="limits_major_minor_lead">Major or minor isn\'t clear yet.</string>
+    <string name="limits_major_minor">C major and A minor use the same notes. KeyCatch waits for clues, like where the lines come to rest, so give it a moment.</string>
+    <string name="limits_room_lead">The room is busy.</string>
+    <string name="limits_room">Talking, clapping, a loud fan or a phone in a pocket can drown out the music. Hold the phone closer to the sound.</string>
+    <string name="limits_one_key_lead">The song doesn\'t stay in one key.</string>
+    <string name="limits_one_key">Blues, modal tunes and songs full of passing chords can pull it toward a neighbouring key.</string>
+    <string name="limits_beat_lead">The beat is busy.</string>
+    <string name="limits_beat">In Band and Guitar modes the tempo can lock onto double or half the real speed. Tap the BPM number to switch between them.</string>
+    <string name="limits_voices_lead">Only voices are singing.</string>
+    <string name="limits_voices">Singing rarely gives a steady beat, so in Voices mode you tap the tempo in yourself.</string>
+    <string name="limits_notes_heading">A few more honest notes</string>
+    <string name="limits_note_late">Chords show up about half a beat late, because KeyCatch listens a little ahead to be sure.</string>
+    <string name="limits_note_simple">Rich chords are shown as the nearest simple one. A Cmaj9 might show as Cmaj7 or C.</string>
+    <string name="limits_note_tuning">If your band tunes to something other than A = 440, set it in Settings so “in tune” means what you expect.</string>
+    <string name="limits_note_new">KeyCatch is new, and we haven\'t tried it in every kind of room or with every kind of band yet.</string>
+    <string name="limits_closing">Think of KeyCatch as a second pair of ears, not the final word. When it matters, trust your own ears too. If something looks off, New song gives it a fresh start.</string>
+    <string name="limits_privacy">Everything happens on your phone. No audio leaves it unless you choose to share a recorded clip yourself.</string>
 </resources>

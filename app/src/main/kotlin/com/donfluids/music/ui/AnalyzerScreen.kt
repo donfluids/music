@@ -201,6 +201,11 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
     val a = state.analysis
     val sh = shown(state)
 
+    if (state.showLimits) {
+        LimitsScreen(onClose = { viewModel.showLimits(false) })
+        return
+    }
+
     if (state.showHistory) {
         HistoryScreen(
             songs = state.history,
@@ -232,6 +237,7 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
                         onDelete = viewModel::deleteClips,
                         onHistory = { viewModel.showHistory(true) },
                         onSettings = { viewModel.showSettings(true) },
+                        onLimits = { viewModel.showLimits(true) },
                     )
                 },
             )
@@ -373,6 +379,7 @@ private fun OverflowMenu(
     onDelete: () -> Unit,
     onHistory: () -> Unit,
     onSettings: () -> Unit,
+    onLimits: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -385,6 +392,7 @@ private fun OverflowMenu(
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text(stringResource(R.string.history_title)) }, leadingIcon = icon(R.drawable.ic_history), onClick = { open = false; onHistory() })
             DropdownMenuItem(text = { Text(stringResource(R.string.settings)) }, leadingIcon = icon(R.drawable.ic_settings), onClick = { open = false; onSettings() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.limits_title)) }, leadingIcon = icon(R.drawable.ic_info), onClick = { open = false; onLimits() })
             HorizontalDivider()
             if (recording) {
                 DropdownMenuItem(text = { Text(stringResource(R.string.stop_clip)) }, leadingIcon = icon(R.drawable.ic_stop), onClick = { open = false; onStopClip() })

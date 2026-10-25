@@ -66,6 +66,8 @@ data class UiState(
     val history: List<SongRecord> = emptyList(),
     val showHistory: Boolean = false,
     val showSettings: Boolean = false,
+    /** The "What to expect" page, about what the app can and can't do. */
+    val showLimits: Boolean = false,
 )
 
 /** The range of the tuning reference, in Hz. */
@@ -255,6 +257,10 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
 
     fun showSettings(show: Boolean) {
         _state.update { it.copy(showSettings = show) }
+    }
+
+    fun showLimits(show: Boolean) {
+        _state.update { it.copy(showLimits = show) }
     }
 
     // ---- History ----
