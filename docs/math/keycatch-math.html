@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The mathematics of KeyCatch</title>
+<style>
+  @font-face { font-family: Manrope; font-weight: 600; src: url('{{FONT_DIR}}/manrope_semibold.ttf'); }
+  @font-face { font-family: Manrope; font-weight: 500; src: url('{{FONT_DIR}}/manrope_medium.ttf'); }
+  @font-face { font-family: Manrope; font-weight: 400; src: url('{{FONT_DIR}}/manrope_regular.ttf'); }
+  :root { --ink: #1c1b19; --muted: #5e5953; --rule: #e2ded6; --teal: #0f766e; --panel: #f6f4f0; }
+  html { font-size: 10.4pt; }
+  body { font-family: KaTeX_Main, 'Latin Modern Roman', 'Times New Roman', serif; color: var(--ink); line-height: 1.45; margin: 0; }
+  h1, h2, h3, h4, .sans, table, figcaption, .toc { font-family: Manrope, 'Helvetica Neue', Arial, sans-serif; }
+  h1 { font-size: 23pt; font-weight: 600; letter-spacing: -0.3pt; margin: 0 0 4pt; }
+  h2 { font-size: 14pt; font-weight: 600; margin: 22pt 0 6pt; border-bottom: 1px solid var(--rule); padding-bottom: 3pt; break-after: avoid; }
+  h3 { font-size: 11pt; font-weight: 600; margin: 14pt 0 4pt; break-after: avoid; }
+  h4 { font-size: 10pt; font-weight: 600; margin: 10pt 0 2pt; color: var(--muted); break-after: avoid; }
+  p { margin: 5pt 0; text-align: justify; hyphens: auto; }
+  .katex-display { margin: 7pt 0; }
+  .katex { font-size: 1.05em; }
+  table { border-collapse: collapse; width: 100%; font-size: 8.6pt; margin: 6pt 0 8pt; break-inside: avoid; }
+  th, td { border-bottom: 1px solid var(--rule); padding: 3pt 5pt; text-align: left; vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); border-bottom: 1.2px solid #b8b2a7; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  figure { margin: 10pt 0; break-inside: avoid; }
+  figcaption { font-size: 8.6pt; color: var(--muted); margin-top: 3pt; }
+  .note { background: var(--panel); border-left: 3px solid var(--teal); padding: 5pt 8pt; margin: 8pt 0; font-size: 9.4pt; break-inside: avoid; }
+  .note p { margin: 2pt 0; }
+  code { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.4pt; }
+  .title { margin-top: 30mm; }
+  .subtitle { font-family: Manrope, sans-serif; font-size: 12pt; color: var(--muted); margin: 0 0 14pt; }
+  .meta { font-family: Manrope, sans-serif; font-size: 9pt; color: var(--muted); }
+  .abstract { margin: 16pt 0; font-size: 10pt; }
+  .toc { font-size: 9.5pt; columns: 2; column-gap: 18pt; margin-top: 12pt; }
+  .toc div { break-inside: avoid; margin: 1.5pt 0; }
+  .toc .sub { padding-left: 12pt; color: var(--muted); }
+  .page-break { break-before: page; }
+  ol, ul { margin: 4pt 0 4pt 16pt; padding: 0; }
+  li { margin: 2pt 0; }
+</style>
+</head>
+<body>
+
+<section class="title">
+  <h1>The mathematics of KeyCatch</h1>
+  <p class="subtitle">Signal processing and inference behind live key, chord, tempo and metre detection</p>
+  <p class="meta">Technical reference for the analysis engine, Kotlin package <code>com.donfluids.music.dsp</code> · October 2026</p>
+  <div class="abstract">
+    <p>KeyCatch listens through a phone microphone and reports the key, the chord sounding now, the tempo, the time signature and, for singing, how far the singers sit from the pitch grid. Everything runs on the phone in real time, in about 3,000 lines of Kotlin with no machine-learned model. This document sets out every stage as equations, with the constants the code actually uses: the spectral front end; the pitch-class profile and its circular tuning estimate; correlation key finding; a hidden Markov chord tracker decoded by fixed-lag Viterbi; a whole-song key estimate from chords; a monophonic pitch tracker, note segmenter and circular-statistics singer model; a Viterbi tracker that follows singers who wander between keys; a log-odds resolver for a major key against its relative minor; spectral-flux onsets, autocorrelation tempo and template-folding metre; and the arithmetic behind the display.</p>
+    <p>Most weights and thresholds were set by hand from music theory and tuned on synthetic recordings; section 15 says which, and what that implies.</p>
+  </div>
+  <div class="toc">
+    <div>1 Overview, notation and timing</div>
+    <div>2 Spectral front end</div>
+    <div>3 Pitch-class profile and tuning</div>
+    <div>4 Key from the pitch-class profile</div>
+    <div>5 Chord tracking</div>
+    <div>6 Key from the chord sequence</div>
+    <div>7 Melody: pitch, notes and the singer</div>
+    <div>8 Following singers who wander</div>
+    <div>9 Major or relative minor</div>
+    <div>10 Confidence and decision gates</div>
+    <div>11 Onsets, tempo and beat phase</div>
+    <div>12 Time signature</div>
+    <div>13 Tapped tempo</div>
+    <div>14 Display arithmetic</div>
+    <div>15 Cost, latency and limitations</div>
+    <div>16 References</div>
+    <div>A Parameters by preset</div>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<h2 class="page-break">1 Overview, notation and timing</h2>
+
+<p>Audio arrives as mono 16-bit PCM at \(f_s = 44\,100\) Hz (48 kHz, 22.05 kHz or 16 kHz if the device refuses 44.1 kHz), from Android's <code>UNPROCESSED</code> source where the device offers it (so that automatic gain control and noise suppression do not reshape the spectrum) and <code>VOICE_RECOGNITION</code> otherwise. Samples are pushed through a sliding analysis buffer in hops of \(H = 512\) samples. Every hop feeds the onset detector; every fourth hop feeds the tonal stages (pitch-class profile, chords, key, melody); about every half second the rhythm stages run (tempo, metre, song key). Figure 1 shows the flow.</p>
+
+<figure>
+<svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Manrope, Helvetica, Arial, sans-serif" font-size="10.5" role="img" aria-label="Signal flow of the analysis engine">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8c877f"/></marker></defs>
+  <g fill="#f6f4f0" stroke="#b8b2a7">
+    <rect x="8" y="128" width="88" height="44" rx="6"/>
+    <rect x="128" y="22" width="120" height="40" rx="6"/>
+    <rect x="128" y="128" width="120" height="44" rx="6"/>
+    <rect x="128" y="236" width="120" height="44" rx="6"/>
+    <rect x="282" y="22" width="110" height="40" rx="6"/>
+    <rect x="282" y="96" width="110" height="36" rx="6"/>
+    <rect x="282" y="168" width="110" height="36" rx="6"/>
+    <rect x="282" y="236" width="110" height="44" rx="6"/>
+    <rect x="424" y="22" width="96" height="40" rx="6"/>
+    <rect x="424" y="96" width="96" height="36" rx="6"/>
+    <rect x="424" y="168" width="96" height="36" rx="6"/>
+    <rect x="424" y="236" width="96" height="44" rx="6"/>
+    <rect x="548" y="96" width="84" height="108" rx="6" fill="#d9f0ec" stroke="#0f766e"/>
+  </g>
+  <g fill="#1c1b19" text-anchor="middle">
+    <text x="52" y="146">Microphone</text><text x="52" y="160" fill="#5e5953">512-sample hops</text>
+    <text x="188" y="39">Onset flux</text><text x="188" y="53" fill="#5e5953">2048-pt FFT · §11</text>
+    <text x="188" y="146">Pitch-class profile</text><text x="188" y="160" fill="#5e5953">8192 + 16384 FFT · §3</text>
+    <text x="188" y="254">Pitch tracker</text><text x="188" y="268" fill="#5e5953">ACF, 2048 · §7 (Voices)</text>
+    <text x="337" y="39">Tempo, phase</text><text x="337" y="53" fill="#5e5953">§11</text>
+    <text x="337" y="118">Chord HMM §5</text>
+    <text x="337" y="190">Key (profiles) §4</text>
+    <text x="337" y="254">Notes, singer</text><text x="337" y="268" fill="#5e5953">§7</text>
+    <text x="472" y="39">Metre</text><text x="472" y="53" fill="#5e5953">§12</text>
+    <text x="472" y="118">Song key §6</text>
+    <text x="472" y="190">Major/minor §9</text>
+    <text x="472" y="254">Key level</text><text x="472" y="268" fill="#5e5953">§8</text>
+    <text x="590" y="146">Display</text><text x="590" y="160" fill="#5e5953">§14</text>
+  </g>
+  <g stroke="#8c877f" fill="none" marker-end="url(#a)" stroke-width="1.2">
+    <path d="M96,150 C112,150 112,42 126,42"/>
+    <path d="M96,150 H126"/>
+    <path d="M96,150 C112,150 112,258 126,258"/>
+    <path d="M248,42 H280"/>
+    <path d="M248,150 C264,150 264,114 280,114"/>
+    <path d="M248,150 C264,150 264,186 280,186"/>
+    <path d="M248,258 H280"/>
+    <path d="M337,62 V94"/>
+    <path d="M392,42 H422"/>
+    <path d="M392,114 H422"/>
+    <path d="M392,186 H422"/>
+    <path d="M392,258 H422"/>
+    <path d="M472,236 V206"/>
+    <path d="M520,42 C536,42 536,112 546,112"/>
+    <path d="M520,114 C532,114 532,134 546,134"/>
+    <path d="M520,186 C532,186 532,166 546,166"/>
+    <path d="M520,258 C536,258 536,188 546,188"/>
+  </g>
+</svg>
+<figcaption>Figure 1. Signal flow. The pitch tracker, note segmenter and key-level tracker run only in the Voices preset; there the melody replaces chroma as the main key evidence. The tempo phase sets the chord tracker's observation grid, and the song key feeds back into the chord model's transitions (not drawn).</figcaption>
+</figure>
+
+<h3>1.1 Conventions</h3>
+<p>Pitch classes are integers modulo 12 with \(0 = \mathrm{C}\). A frequency \(f\) maps to a fractional MIDI number and to cents:</p>
+$$ m(f) = 69 + 12\log_2\frac{f}{440\ \text{Hz}}, \qquad c(f) = 100\,m(f). $$
+<p>\(\wrap(x)\) folds a cent value into \((-50, 50]\); \(\clamp(x, a, b) = \min(\max(x,a),b)\); \(\round\) rounds half up; \(\median_w\) and \(Q_w(q)\) are the weighted median and the weighted \(q\)-quantile (the smallest value whose cumulative weight reaches \(q\) of the total). A key \(K = (t, \mu)\) has tonic \(t\in\mathbb{Z}_{12}\) and mode \(\mu\in\{\text{major},\text{minor}\}\); its relative is \((t-3, \text{minor})\) for a major key and \((t+3, \text{major})\) for a minor one.</p>
+
+<h3>1.2 Time base</h3>
+<table>
+  <tr><th>Quantity</th><th>Expression</th><th class="num">Value at 44.1 kHz</th></tr>
+  <tr><td>Hop</td><td>\(H/f_s\)</td><td class="num">11.6 ms (86.13 hops/s)</td></tr>
+  <tr><td>Tonal frame (chroma, key, chords, pitch)</td><td>\(4H/f_s\)</td><td class="num">46.4 ms</td></tr>
+  <tr><td>Rhythm update (tempo, metre, song key)</td><td>\(\round(f_s/2H)\cdot H/f_s\)</td><td class="num">43 hops = 0.499 s</td></tr>
+  <tr><td>Main / bass / onset / pitch window</td><td>8192 / 16384 / 2048 / 2048 samples</td><td class="num">186 / 372 / 46 / 46 ms</td></tr>
+  <tr><td>Main / bass / onset bin spacing</td><td>\(\Delta f = f_s/N\)</td><td class="num">5.38 / 2.69 / 21.5 Hz</td></tr>
+</table>
+<p>The analysis buffer holds the last 16,384 samples (the longest window). Each stage reads the most recent \(N\) samples it needs, so all windows end at the same instant.</p>
+
+<!-- ====================================================================== -->
+<h2>2 Spectral front end</h2>
+<p>Every spectrum uses a periodic Hann window and a radix-2 FFT written in plain Kotlin (iterative, bit-reversed, precomputed twiddles):</p>
+$$ w[n] = \tfrac12 - \tfrac12\cos\frac{2\pi n}{N},\qquad X[k] = \sum_{n=0}^{N-1} x[n]\,w[n]\,e^{-2\pi i kn/N},\qquad A[k] = \frac{2}{N}\,|X[k]|,\quad k = 0,\dots,\tfrac N2 . $$
+<p>The \(2/N\) scale makes a full-scale sine peak near 0.5 after the Hann window's coherent gain of \(\tfrac12\). Only magnitudes are used; phase is discarded everywhere.</p>
+
+<!-- ====================================================================== -->
+<h2>3 Pitch-class profile and tuning</h2>
+<p>The pitch-class profile (chroma) is a 12-vector of energy per pitch class. KeyCatch builds it from spectral <em>peaks</em> rather than from every bin, so that a note contributes to one pitch class instead of smearing over neighbouring semitones, and each peak also yields a fine-tuning reading.</p>
+
+<h3>3.1 Two resolutions</h3>
+<p>A semitone at 55 Hz spans \(55(2^{1/12}-1) \approx 3.3\) Hz, barely more than one bin of the 8192-point spectrum. Peaks below \(f_x = 260\) Hz are therefore taken from a 16,384-point spectrum (\(\Delta f = 2.69\) Hz, 372 ms) and peaks from \(f_x\) to the preset's upper limit from the 8192-point one (\(\Delta f = 5.38\) Hz, 186 ms), which follows chord changes twice as fast. The bands are \([f_{\min}, f_x)\) and \([f_x, f_{\max})\) with \(f_{\min}, f_{\max}\) per preset (Appendix A).</p>
+
+<h3>3.2 Peak picking and interpolation</h3>
+<p>Within a band of bins \([k_0, k_1]\) the noise floor is the median magnitude, and a bin is a peak when it clears four times that floor and is a local maximum:</p>
+$$ \nu = \median_{k_0\le k\le k_1} A[k],\qquad A[k] > 4\nu,\quad A[k] > A[k-1],\quad A[k] \ge A[k+1]. $$
+<p>Its frequency is refined by fitting a parabola to the <em>log</em> magnitudes of the three bins (exact for a Gaussian main lobe and close for Hann):</p>
+$$ \alpha,\beta,\gamma = \ln A[k-1],\ \ln A[k],\ \ln A[k+1],\qquad \delta = \clamp\!\left(\frac12\,\frac{\alpha-\gamma}{\alpha-2\beta+\gamma},\,-\tfrac12,\,\tfrac12\right),\qquad \hat f = (k+\delta)\,\Delta f . $$
+
+<h3>3.3 From peak to pitch class</h3>
+<p>The peak is placed on a semitone grid that may be offset from A = 440 Hz by \(g\) cents (section 3.5):</p>
+$$ s = 12\log_2\frac{\hat f}{440} - \frac{g}{100},\qquad n = \round(s),\qquad p = (n + 9) \bmod 12,\qquad \varepsilon = 100\,(s - n)\ \text{cents}. $$
+<p>Its weight is its magnitude, rolled off above \(f_r\) (1 kHz, or 800 Hz for Guitar) so that upper partials, which fall on other pitch classes (the third harmonic of C is G, the fifth is E), count for less:</p>
+$$ a = \begin{cases} A[k] & \hat f \le f_r \\ A[k]\,f_r/\hat f & \hat f > f_r \end{cases}\qquad\qquad \chi_t[p] = \sum_{\text{peaks with class }p} a . $$
+
+<h3>3.4 Memory</h3>
+<p>Key finding needs several seconds of evidence; chords need the present. The frame profile \(\chi_t\) is therefore kept twice, with exponential forgetting over the tonal frame interval \(\Delta t = 46.4\) ms:</p>
+$$ C_t = e^{-\Delta t/\tau}\,C_{t-1} + \chi_t,\qquad \tau = 8\ \text{s (Band, Guitar)},\ 10\ \text{s (Voices)};\qquad R_t = e^{-\Delta t/0.5\,\text{s}}\,R_{t-1} + \chi_t . $$
+<p>\(C\) has an effective memory of \(\tau\) (a frame \(\tau\) seconds old counts \(1/e\) as much as a new one); \(R\) holds roughly the last half second.</p>
+
+<h3>3.5 Tuning as a circular mean</h3>
+<p>A peak's deviation \(\varepsilon\) from the grid is periodic: \(+49\) and \(-51\) cents describe nearly the same pitch. It is therefore averaged as an angle. Each peak contributes a weighted unit phasor, accumulated with the same forgetting as \(C\):</p>
+$$ Z_t = e^{-\Delta t/\tau} Z_{t-1} + \sum_{\text{peaks}} a\,e^{\,2\pi i\,\varepsilon/100},\qquad W_t = e^{-\Delta t/\tau} W_{t-1} + \sum_{\text{peaks}} a . $$
+<p>The offset from the grid and its consistency (the mean resultant length) are</p>
+$$ \bar\varepsilon = \frac{100}{2\pi}\arg Z_t \in (-50, 50],\qquad \rho = \frac{|Z_t|}{W_t}\in[0,1], $$
+<p>and the reported tuning against A = 440 Hz is \(\wrap(g + \bar\varepsilon)\). Music in tune with itself but not with 440 Hz gives \(\rho\) near 1 and a steady \(\bar\varepsilon\); noise gives \(\rho\) near 0.</p>
+<p><strong>Adaptive grid.</strong> If the music sits consistently off the grid, every note straddles two pitch classes. At most every two seconds, when \(\rho > 0.5\) and \(|\bar\varepsilon| > 15\) cents, the grid moves onto the music and the phasor is re-expressed against the new grid:</p>
+$$ g \leftarrow \wrap(g + \bar\varepsilon),\qquad Z_t \leftarrow |Z_t| . $$
+
+<div class="note"><p><strong>Shared-engine note.</strong> The same extractor can discount the device's own output (used by the companion Mini Piano app, which plays while it listens). Given a bit-mask \(\Omega\) of pitch classes being sounded, extended with their fifths (the third harmonic), a peak within 30 cents of a masked class at concert pitch keeps only \(0.2a\) and is left out of the tuning phasor. KeyCatch plays nothing, so \(\Omega = \varnothing\).</p></div>
+
+<!-- ====================================================================== -->
+<h2>4 Key from the pitch-class profile</h2>
+<p>The Band and Guitar presets, and the Voices preset before enough notes are sung, find the key by correlating the accumulated profile \(C\) with the Krumhansl–Kessler probe-tone profiles [1], rotated to each of the 12 tonics (Figure 2).</p>
+<figure>
+<!--include: figures/fig_profiles.svg-->
+<figcaption>Figure 2. Krumhansl–Kessler profiles: how well each pitch class was judged to fit a C major or C minor context (1–7 scale). The minor profile's peak on E♭ (5.38) against the major's E (4.38) is most of what separates a key from its parallel mode.</figcaption>
+</figure>
+$$ P_K[p] = P_\mu\big[(p - t) \bmod 12\big],\qquad r(K) = \frac{\sum_p (C[p]-\bar C)(P_K[p]-\bar P_\mu)}{\sqrt{\sum_p (C[p]-\bar C)^2\,\sum_p (P_\mu[p]-\bar P_\mu)^2}} . $$
+<p>The 24 keys are ranked by Pearson correlation \(r\). With \(r_1 \ge r_2\) the two best, the displayed confidence is a blend of fit and margin:</p>
+$$ \kappa = \tfrac12\,\clamp(r_1, 0, 1) + \tfrac12\,\clamp\big(4(r_1 - r_2), 0, 1\big). $$
+<p><strong>Gating and hysteresis.</strong> Nothing is shown in the first second, while \(W < 10^{-4}\), or while \(\kappa < 0.15\). The shown key \(K^\ast\) changes to a challenger \(K_1\) only when \(r(K_1) - r(K^\ast) > 0.05\) on 12 consecutive tonal frames (0.56 s). Correlation finds the right <em>set of seven notes</em> reliably but cannot by itself choose between a major key and its relative minor, which share them; section 9 does that.</p>
+
+<!-- ====================================================================== -->
+<h2>5 Chord tracking</h2>
+
+<h3>5.1 Templates</h3>
+<p>There are 84 chord templates: 12 roots \(\times\) 7 types (major, minor, dominant 7th, major 7th, minor 7th, sus4, sus2). A template puts weight 1.0 on the root, 0.8 on the third (the second or fourth of a sus chord), 0.9 on the fifth and 0.7 on the seventh; for C major, \(w = (1, 0, 0, 0, 0.8, 0, 0, 0.9, 0, 0, 0, 0)\). An observation \(x\) (an averaged frame profile) is scored against template \(j\) by cosine similarity, less a small handicap \(\pi_j\) for extended chords so that a triad with a little overtone energy on its seventh is not called a seventh chord:</p>
+$$ \sigma_j(x) = \frac{\langle x, w_j\rangle}{\|x\|\,\|w_j\|},\qquad \pi_j = \begin{cases}0 & \text{triad}\\ 0.05 & \text{sus2, sus4}\\ 0.04 & \text{7th chords}\end{cases} $$
+
+<h3>5.2 Observations</h3>
+<p>Frame profiles \(\chi_t\) are averaged over one observation. Once a beat is known, observations end on half-beat boundaries, or quarter-beat ones when half a beat exceeds 0.35 s, so that the chord grid follows the music; without a beat they span 4 frames (186 ms). No observation exceeds 16 frames (0.74 s). Let \(\Delta_t\) be the span of observation \(t\).</p>
+
+<h3>5.3 Hidden Markov model</h3>
+<p>The states are the 84 chords plus a no-chord state \(\varnothing\). Emissions are log-linear in the similarity with sharpness \(\beta = 12\):</p>
+$$ \log b_j(x) = \beta\big(\sigma_j(x) - \pi_j\big),\qquad \log b_\varnothing(x) = 0.58\,\beta + 5\cdot\mathbf 1[\text{silent}], $$
+<p>where an observation is silent when \(\|x\| = 0\) or its mean is below \(10^{-4}\); in silence every chord scores 0. The constant 0.58 is just above the similarity a flat profile reaches by chance (about 0.5), so no-chord wins when nothing fits.</p>
+<p>The model prefers to stay put. With an expected chord length of \(D = 1.5\) s the probability of staying is set by the time an observation spans, and the probability of leaving is shared out over all states, favouring chords that belong to the current key by a factor \(e^{1.5} \approx 4.5\):</p>
+$$ p_{\text{stay}} = e^{-\Delta_t/D},\qquad u_j = \begin{cases} e^{1.5} & j \text{ diatonic in } K\\ 1 & \text{otherwise}\end{cases},\qquad \log a_{ij} = \begin{cases} \ln p_{\text{stay}} & i = j\\ \ln(1-p_{\text{stay}}) + \ln\dfrac{u_j}{\sum_k u_k} & i \ne j \end{cases} $$
+<p>A chord is diatonic in \(K\) when its root is a scale degree and its third matches the degree's triad (the diminished degree counts as minor), or when it is a sus chord on a scale degree. The key \(K\) fed to the model is the chord-based song key once that is shown (section 6), otherwise the profile key.</p>
+
+<h3>5.4 Viterbi in linear time</h3>
+<p>The recursion is the usual one, in log space:</p>
+$$ \delta_t(j) = \log b_j(x_t) + \max\Big( \delta_{t-1}(j) + \ln p_{\text{stay}},\ \ \max_{i\neq j}\, \delta_{t-1}(i) + \ln(1-p_{\text{stay}}) + \ln\frac{u_j}{\textstyle\sum_k u_k}\Big). $$
+<p>The switch term does not depend on \(i\), so the inner maximum is the best state of the previous step, or the runner-up when \(j\) is itself the best. One pass to find the best two makes each step \(O(N)\) instead of \(O(N^2)\) for \(N = 85\) states. After each step \(\max_j \delta_t(j)\) is subtracted to keep the numbers bounded.</p>
+
+<h3>5.5 Fixed-lag decisions</h3>
+<p>A frame-by-frame argmax flickers. Instead the decision for observation \(t - (L-1)\) is read by backtracking \(L - 1 = 3\) steps from \(\argmax_j \delta_t(j)\), with \(L = 4\): each chord is decided once three later observations are known. The cost is latency. At 120 BPM an observation is half a beat (0.25 s), so a chord is confirmed 0.75 s after its observation ends, about 1.5 to 2 beats after it starts; without a beat the delay is 0.56 to 0.74 s. The unconfirmed \(\argmax_j \delta_t(j)\) is also kept as a provisional chord. Consecutive equal decisions are merged into timed segments \((c_s, \text{start}_s, \text{end}_s)\).</p>
+
+<!-- ====================================================================== -->
+<h2>6 Key from the chord sequence</h2>
+<p>Over a whole song, the chords say more about the key than the notes do: a song in G that leans on C and D chords has a note profile close to C major, but its tonic chord, its cadences and where it starts and ends point to G. Every key \(K\) is scored from the segments \(s\) with durations \(d_s\):</p>
+$$ S(K) = \frac{\sum_s \omega_K(c_s)\,d_s}{\sum_s d_s} + \min(0.03\,N_{\text{cad}}(K),\ 0.15) + 0.05\cdot\mathbf 1[c_{\text{first}} = \mathrm I_K] + 0.05\cdot\mathbf 1[c_{\text{last}} = \mathrm I_K], $$
+<p>where \(N_{\text{cad}}\) counts changes from a dominant (a major chord on the fifth degree, or any chord there in a minor key) directly to the tonic triad. The chord weights \(\omega_K\) depend on the chord's interval above the tonic and on its third:</p>
+<table>
+  <tr><th>Major key</th><th class="num">\(\omega\)</th><th>Minor key</th><th class="num">\(\omega\)</th></tr>
+  <tr><td>I</td><td class="num">1.0</td><td>i</td><td class="num">1.0</td></tr>
+  <tr><td>IV, V</td><td class="num">0.8</td><td>iv, V (harmonic minor)</td><td class="num">0.7</td></tr>
+  <tr><td>vi</td><td class="num">0.6</td><td>VI</td><td class="num">0.6</td></tr>
+  <tr><td>ii</td><td class="num">0.5</td><td>v, III, VII</td><td class="num">0.5</td></tr>
+  <tr><td>iii</td><td class="num">0.4</td><td>ii (heard as minor)</td><td class="num">0.4</td></tr>
+  <tr><td>♭VII (borrowed)</td><td class="num">0.25</td><td>IV (Dorian)</td><td class="num">0.15</td></tr>
+  <tr><td>iv (borrowed)</td><td class="num">0.15</td><td></td><td></td></tr>
+  <tr><td>II (V of V)</td><td class="num">0.1</td><td></td><td></td></tr>
+  <tr><td>III, VI (secondary dominants)</td><td class="num">0</td><td></td><td></td></tr>
+  <tr><td>anything else</td><td class="num">−0.3</td><td>anything else</td><td class="num">−0.3</td></tr>
+</table>
+<p>A sus chord counts \(0.8\,\omega\) (it says nothing about mode); a dominant seventh on the fifth degree counts \(\omega + 0.1\). The confidence takes the same form as in section 4, \(\kappa_c = \tfrac12\clamp(S_1,0,1) + \tfrac12\clamp(4(S_1 - S_2),0,1)\), and nothing is computed before 4 s of chords.</p>
+<p><strong>Promotion.</strong> The chord key replaces the profile key on screen after \(\kappa_c \ge 0.4\) on four consecutive rhythm updates (about 2 s), and is demoted after \(\kappa_c < 0.25\) on four. It overrides only when it names a different pair of relative keys, and never in the Voices preset, where a single voice's overtones can look like chords (a sung E is close to an E major triad).</p>
+
+<!-- ====================================================================== -->
+<h2>7 Melody: pitch, notes and the singer</h2>
+<p>In the Voices preset there is often no harmony to read. A single voice is better served by following its pitch, turning it into notes, and learning how this particular singer sings.</p>
+
+<h3>7.1 Pitch</h3>
+<p>Each tonal frame, the last \(N = 2048\) samples are Hann-windowed (\(y = xw\)). A frame quieter than RMS 0.004 (about −48 dBFS) is unvoiced. Otherwise the normalised autocorrelation is computed over lags covering 70 Hz to 1 kHz:</p>
+$$ \rho(\tau) = \frac{\sum_{n=0}^{N-1-\tau} y[n]\,y[n+\tau]}{\sqrt{\sum_{n} y[n]^2\ \sum_{n} y[n+\tau]^2}},\qquad \tau \in \Big[\Big\lfloor\frac{f_s}{1000}\Big\rfloor,\ \min\Big(\Big\lfloor\frac{f_s}{70}\Big\rfloor, \frac N2\Big)\Big] = [44, 630]. $$
+<p>Let \(\rho^\ast = \max_\tau \rho(\tau)\). The frame is unvoiced if \(\rho^\ast < 0.55\). To avoid the classic octave-low error, the chosen lag is the <em>first</em> local maximum with \(\rho(\tau) \ge 0.85\,\rho^\ast\), refined by a parabola through its neighbours (linear values this time):</p>
+$$ \hat\tau = \tau + \frac12\,\frac{\rho(\tau-1) - \rho(\tau+1)}{\rho(\tau-1) - 2\rho(\tau) + \rho(\tau+1)},\qquad f_0 = \frac{f_s}{\hat\tau},\qquad \text{clarity} = \rho(\tau). $$
+
+<h3>7.2 Notes</h3>
+<p>Pitch readings \(m_t = m(f_0) - o/100\), already moved onto the singer's grid (offset \(o\), section 7.3), are grouped into notes. Vibrato swings a few tenths of a semitone and comes back; a slide or scoop does not come back. Each reading is weighted by its steadiness over one vibrato cycle (0.2 s):</p>
+$$ \Delta_t = |m_t - m_{t-0.2\,\mathrm s}|,\qquad \lambda_t = \frac{1}{1 + (\Delta_t/0.3)^2} . $$
+<p>A note's pitch is the steadiness-weighted mean of its readings, \(\hat m = \sum \lambda_t m_t / \sum \lambda_t\) (the plain mean until \(\sum\lambda > 0.2\)). A note continues while each reading stays within 0.6 semitones of \(\hat m\) and gaps are under 80 ms. It is kept if it lasts at least 120 ms and at least a quarter of its readings have \(\lambda > 0.5\); a run that is mostly slide is dropped. Each note records its fractional grid pitch, start, duration, and the grid offset at the time, so its concert pitch is \(\hat m + o/100\).</p>
+
+<h3>7.3 The singer model</h3>
+<p>Untrained singers are rarely at A = 440 Hz, and some scatter widely. Two numbers are learned per singer, note by note.</p>
+<h4>Offset: a chance-corrected circular mean</h4>
+<p>A note's residual from its nearest grid semitone, \(e = 100(\hat m - \round\hat m)\) cents, is an angle \(\theta = 2\pi e/100\). With note weights \(v = \clamp(\text{duration}, 0.1, 1.5)\) s and fading over \(T = 8\) s of singing,</p>
+$$ S \leftarrow \phi S + v\,e^{i\theta},\quad V_1 \leftarrow \phi V_1 + v,\quad V_2 \leftarrow \phi^2 V_2 + v^2,\qquad \phi = e^{-\Delta t_{\text{note}}/T}. $$
+<p>The mean residual is \(\bar e = \frac{100}{2\pi}\arg S\) and its consistency is \(R = |S|/V_1\). Even random residuals line up a little: for independent uniform angles, \(\mathbb E[R^2] = V_2/V_1^2\) (which is \(1/n\) for \(n\) equal weights). Only consistency beyond that counts:</p>
+$$ R_0 = \frac{\sqrt{V_2}}{V_1},\qquad \xi = \clamp\!\left(\frac{R - R_0}{1 - R_0},\, 0,\, 1\right),\qquad o \leftarrow o + 0.8\,\xi^2\,\bar e,\qquad S \leftarrow S\,e^{-2\pi i\,(0.8\,\xi^2\bar e)/100}. $$
+<p>The last step rotates the remembered residuals by the amount the grid just moved, so they are not counted again. Nothing moves until \(V_1 \ge 1\). The squared \(\xi\) means a consistent singer 45 cents sharp pulls the grid most of the way within a few notes, while a scattered singer whose residuals point every way moves it hardly at all. The value shown on screen adds the part of the lean not yet absorbed: \(o_{\text{now}} = o + (1 - 0.8\,\xi)\,\xi\,\bar e\).</p>
+<h4>Spread: a robust scale</h4>
+<p>The singer's spread is the weighted median absolute residual, scaled to a standard deviation by the Gaussian consistency factor \(1/\Phi^{-1}(3/4) = 1.4826\):</p>
+$$ \sigma_c = 1.4826\ \median_{w}\,|e|\quad(\text{20 cents until 4 notes}),\qquad \sigma = \clamp(\sigma_c/100,\ 0.1,\ 0.35)\ \text{semitones}. $$
+<p>A careful singer has \(\sigma_c\) of a few cents; a careless one 25 or more. The median ignores the odd glitch that would inflate a mean.</p>
+
+<h3>7.4 Soft assignment</h3>
+<p>A note 45 cents above C is not a clean vote for C or for C♯. Given \(\sigma\), a note at fractional pitch \(x\) shares its weight among nearby semitones \(k \in \{\lfloor x\rfloor - 1, \dots, \lfloor x\rfloor + 2\}\):</p>
+$$ \eta_k(x) = \frac{\exp\!\big(-(x-k)^2/2\sigma^2\big)}{\sum_{k'}\exp\!\big(-(x-k')^2/2\sigma^2\big)},\qquad \text{shares below 1\% dropped};\qquad \sigma < 0.05 \Rightarrow \text{plain rounding}. $$
+<p>With \(\sigma = 0.3\), a note at C + 45 cents splits about 64% C, 36% C♯. Every note-based key statistic below uses these shares.</p>
+
+<h3>7.5 Key from the melody</h3>
+<p>For a tune, phrase endings and long notes are the strongest tonic cues. Each note gets weight</p>
+$$ w = \text{duration} + 0.6\cdot\mathbf 1[\text{phrase end}] + 0.4\cdot\mathbf 1[\text{longest note}], $$
+<p>where a phrase ends when the next note starts more than 0.4 s later (or there is none). The histogram \(h[p] = \sum_{\text{notes}} w\,\eta_p\) is correlated with Temperley's melodic profiles [2] exactly as in section 4:</p>
+$$ P^{\text{maj}} = (5, 2, 3.5, 2, 4.5, 4, 2, 4.5, 2, 3.5, 1.5, 4),\qquad P^{\text{min}} = (5, 2, 3.5, 4.5, 2, 4, 2, 4.5, 3.5, 2, 1.5, 4). $$
+<p>Once 8 notes are in, this ranking replaces the profile key. A challenger must lead the shown key's score by more than 0.04 for 36 consecutive frames (1.7 s) before the display moves; near ties otherwise flip on every note.</p>
+
+<!-- ====================================================================== -->
+<h2>8 Following singers who wander</h2>
+<p>Groups without accompaniment drift. A song may start in C, creep up to C♯ and D, and come back. Neither the tuning estimate (which works within one semitone: a tune moved up exactly a semitone fits the new grid perfectly) nor a note histogram (which mixes two keys into a third) can see this. The key-level tracker treats the key as one continuous position in cents and decodes its path through the notes.</p>
+
+<h3>8.1 State space and emissions</h3>
+<p>The state \(s \in \{0, \dots, 119\}\) places a pitch template at \(10s\) cents around the octave (\(\Delta = 10\) cents per state). For a note at concert pitch \(c_i\) cents with weight \(v_i = \clamp(d_i, 0.1, 1.5)/0.5\), the log-emission is read from a 120-bin profile \(\Pi\) (built in 8.3) placed at the state, with a floor \(\epsilon = 0.05\) for passing chromatic notes:</p>
+$$ \ell_i(s) = v_i\,\ln\!\Big(\Pi\big[\round\big((c_i - (\Delta s - r))/\Delta\big) \bmod 120\big] + \epsilon\Big), $$
+<p>where \(r\) is the profile's reference level.</p>
+
+<h3>8.2 Transitions and decoding</h3>
+<p>Between notes \(i-1\) and \(i\), \(\Delta t_i = \max(t_i - t_{i-1}, 0.05)\) s apart, the level may drift as a random walk with variance 150 cents² per second (a semitone in about a minute comes easily), or take a clean step of 60 to 240 cents (a deliberate key change) at a fixed cost. Moves are limited to \(\pm 30\) states (300 cents):</p>
+$$ V_i = 150\,\Delta t_i + 5^2,\qquad \log a(k) = \max\!\Big(-\frac{(10k)^2}{2V_i},\ \ \begin{cases}-6 & 60 \le |10k| \le 240\\ -\infty & \text{otherwise}\end{cases}\Big),\qquad |k| \le 30 . $$
+<p>Viterbi with these transitions costs \(O(n \cdot 120 \cdot 61)\) for \(n\) notes. The decoded states are then <em>unwrapped</em>, each step taken the short way round the circle, so the path never resets at a semitone or an octave: C, C + 40 cents, C♯ + 10, D, back to C is one curve \(\gamma_1, \dots, \gamma_n\) in cents.</p>
+
+<h3>8.3 The song as its own template</h3>
+<p>Many songs use only five notes (C D E G A). Those fit three different seven-note scales, and the same tune a semitone higher fits three shifted scales, two of which are a semitone away in opposite directions, so a generic scale template cannot tell which way the singers went. The tune matches <em>itself</em> only at the true shift. The template is therefore built from the song in three passes:</p>
+<ol>
+  <li><strong>Opening.</strong> The notes of the first 8 s, before the singers have had time to wander, are placed as a circular Gaussian kernel density over the 120 bins, \(\Pi_0[b] \propto \sum_i v_i \exp(-d(c_i, 10b)^2/2\sigma_\ell^2)\) with \(d\) the circular distance on 1200 cents, normalised to a peak of 1. It is blended half-and-half with the major scale that best fits the opening, \(\exp(-d_{\text{scale}}^2/2\sigma_\ell^2)\), to fill notes the opening has not yet used. The curve is decoded against this.</li>
+  <li><strong>Self-profile, twice.</strong> Every note is moved back along the current curve to a common reference \(r = \median_w(\gamma)\), \(c_i - (\gamma_i - r)\), a new profile is built from all of them, and the curve is decoded again.</li>
+  <li><strong>Octave.</strong> Whole octaves are arbitrary: the curve is shifted by a multiple of 1200 so that its centre lies within half an octave of C.</li>
+</ol>
+<p>The kernel width is \(\sigma_\ell = \max(\clamp(\text{spread}, 15, 45), \sigma_{nn})\) cents, using the spread from the previous analysis (30 initially) and the note-to-note floor of 8.5. The decoded path is cached until another note closes.</p>
+
+<h3>8.4 What the curve gives</h3>
+<p>With note weights \(w_i = \clamp(d_i, 0.1, 1.5)\):</p>
+$$ \gamma_{\text{centre}} = \median_w(\gamma),\quad G = 100\,\round(\gamma_{\text{centre}}/100),\quad \gamma_{\text{low}} = Q_w(0.1) - G,\quad \gamma_{\text{high}} = Q_w(0.9) - G,\quad \gamma_{\text{now}} = \frac{\sum_{i > n - k} w_i \gamma_i}{\sum_{i>n-k} w_i}, $$
+<p>with \(k = \max(1, \min(4, \lfloor n/4\rfloor))\). The key finders of sections 7.5 and 9 then receive every note moved back onto the centre key and onto its exact semitones, \(c_i - (\gamma_i - G)\), so they see one steady key, exactly in tune. The display shows the centre as the key and, when different, where the singers are now: the shift \(\nu = \round((\gamma_{\text{now}} - G)/100)\), updated only when \(|\gamma_{\text{now}} - G - 100\nu| > 65\) cents, so a level hovering halfway between two keys does not flicker. The tuning shown for Voices becomes \(\gamma_{\text{now}} - (G + 100\nu)\).</p>
+
+<h3>8.5 Spread that cannot be explained away</h3>
+<p>A tracker free to drift could explain a careless singer's scatter as wandering. Two spreads guard against that. The scale spread is \(1.4826\,\median_w\) of each note's distance to the nearest scale degree once the curve is removed. The note-to-note spread differences away the slow trend: a wandering singer carries the same offset from note to note, a careless one lands somewhere new each time. Over neighbouring notes less than 3 s apart,</p>
+$$ D_i = \big|\big((c_i - c_{i-1}) \bmod 100\big)\big|_{\le 50},\qquad \sigma_{nn} = \frac{1.4826\,\median_w(D)}{\sqrt 2}, $$
+<p>(the \(\sqrt 2\) because both notes scatter), and the spread used is \(\max(\text{scale spread}, \sigma_{nn})\). The tracker never assumes a tighter singer than the notes show.</p>
+
+<h3>8.6 Moving or settled</h3>
+<p>The curve's recent behaviour is classified. <strong>Settled</strong>: for some note \(i\) between 5 and 25 s before the last, the notes from \(i\) on hold a level (\(Q(0.9) - Q(0.1) < 40\) cents) and some note in the 6 s before \(i\) was at least 70 cents away from that level. A clean key change and a quick slide that then holds both qualify; to a player they mean the same thing. Otherwise the least-squares slope of \(\gamma\) against time over the last 15 s (at least 4 notes) gives <strong>rising</strong> (\(> 0.8\) cents/s), <strong>falling</strong> (\(< -0.8\)) or <strong>steady</strong>.</p>
+
+<h3>8.7 When the tracker is trusted</h3>
+<p>A short or scattered clip can be read as sitting halfway between two keys, and moving every note by that half would flip them. The tracker's output is used only when there are at least 16 notes and 6 s of singing, and the singers have actually wandered: \(\gamma_{\text{high}} - \gamma_{\text{low}} \ge 70\) or \(|\gamma_{\text{now}} - \gamma_{\text{centre}}| \ge 70\) cents. It needs at least 8 notes to run and keeps the last 400.</p>
+
+<!-- ====================================================================== -->
+<h2>9 Major or relative minor</h2>
+<p>C major and A minor use the same seven notes, so every statistic above finds the <em>pair</em> but not which note of it is home. That is decided separately by summing log-odds style evidence, positive for the major key (tonic \(M\)) and negative for the relative minor (tonic \(M_r = M - 3\)). The weights are set by hand from music theory.</p>
+$$ E = E_{\text{end}} + E_{\text{lt}} + E_{\text{app}} + E_{\text{ch}} + E_{\text{prof}} + 0.25 . $$
+<p>The constant is a small prior toward major. Evidence from a few notes is weak, so the note-based terms are scaled by the amount heard, \(\alpha = \clamp(\sum d_i / 8\,\mathrm s, 0, 1)\) (seconds heard when there are no notes). A raised seventh or a major dominant chord is telling at any time and is not scaled.</p>
+
+<h3>9.1 Endings</h3>
+<p>Home is where a phrase comes to rest. Resting notes are those followed by more than 0.4 s of silence (for the final note, silence up to now), with weight \(\min(d, 1.5)\), doubled for the final note, plus the longest note. With soft shares \(\eta\) and a value per pitch class</p>
+$$ \upsilon(M) = 1,\quad \upsilon(M_r) = -1,\quad \upsilon(M+7) = 0.3\ (\text{half cadence}),\quad \upsilon(M+4) = -0.15,\qquad E_{\text{end}} = 2\alpha\,\frac{\sum_r w_r \sum_p \eta_p(x_r)\,\upsilon(p)}{\sum_r w_r}. $$
+
+<h3>9.2 The leading tone</h3>
+<p>Minor keys raise their seventh (G♯ in A minor, pitch class \(M + 8\)); the major key never uses it. From notes, each sung G♯ counts by its share, by how long it is held (a 0.1 s blip may be a slide), and fully when it resolves up to the minor tonic:</p>
+$$ E_{\text{lt}} = -\min\!\Big(1.2\sum_i \eta_{M+8}(x_i)\,\min\!\big(\tfrac{d_i}{0.4},1\big)\,\big(1 \text{ if next is } M_r,\ \text{else } 0.5\big),\ 2.5\Big). $$
+<p>Without notes it is read from the profile as the raised seventh's share against the natural one: \(\varrho = C[M+8]/(C[M+7] + C[M+8])\), \(E_{\text{lt}} = -2.5\,\clamp\big((\varrho - 0.15)/0.5, 0, 1\big)\).</p>
+
+<h3>9.3 Approaches</h3>
+<p>How a resting note is reached matters: B up to C or G to C points to C; G♯ up to A or E to A points to A. Each resting note scores by its predecessor's interval and pitch class (relative to \(M\)):</p>
+<table>
+  <tr><th>Arriving on</th><th>From</th><th class="num">Score</th></tr>
+  <tr><td>\(M\)</td><td>semitone below (B→C)</td><td class="num">+0.6</td></tr>
+  <tr><td>\(M\)</td><td>tone above (D→C)</td><td class="num">+0.4</td></tr>
+  <tr><td>\(M\)</td><td>fifth/fourth from the dominant (G→C)</td><td class="num">+0.6</td></tr>
+  <tr><td>\(M_r\)</td><td>raised seventh, semitone below (G♯→A)</td><td class="num">−1.0</td></tr>
+  <tr><td>\(M_r\)</td><td>tone above (B→A)</td><td class="num">−0.4</td></tr>
+  <tr><td>\(M_r\)</td><td>fifth/fourth from its dominant (E→A)</td><td class="num">−0.6</td></tr>
+  <tr><td>\(M_r\)</td><td>natural seventh, tone below (G→A)</td><td class="num">−0.3</td></tr>
+</table>
+$$ E_{\text{app}} = \alpha\,\clamp\!\Big(\frac{2.5\sum \text{score}}{\max(4, \#\text{resting})},\,-2,\,2\Big). $$
+
+<h3>9.4 Chords</h3>
+<p>Used only without a tracked melody and after 2 s of chords. Written for the pair C major / A minor, with \(T\) the total chord time, \(T_{\mathrm I}\) and \(T_{\mathrm i}\) the time on the major and minor tonic triads, and \(T_{\mathrm{III}}\) the time on the minor key's major dominant (E major for A minor):</p>
+$$ E_{\text{ch}} = \clamp\!\Big(\frac{2(T_{\mathrm I} - T_{\mathrm i})}{T} - 1.5\min\!\big(\tfrac{T_{\mathrm{III}}}{2\,\mathrm s},1\big) + 0.4\,N_{\mathrm V\to\mathrm I} - 0.4\,N_{\mathrm E\to\mathrm{Am}} - 0.2\,N_{\mathrm{Em}\to\mathrm{Am}},\,-2.5,\,2.5\Big). $$
+
+<h3>9.5 Profile fit</h3>
+<p>From 8 notes, \(E_{\text{prof}} = \alpha\,\clamp(5(S_{\text{maj}} - S_{\text{min}}), -1.2, 1.2)\) with the melodic scores of 7.5; otherwise \(\alpha\,\clamp(6(r_{\text{maj}} - r_{\text{min}}), -1.2, 1.2)\) with the profile correlations of section 4.</p>
+
+<h3>9.6 Decision with hysteresis</h3>
+<p>With threshold \(\Theta = 1.5\,\eta\) (\(\eta\) from section 10), the decision for the pair is</p>
+$$ \text{decided} = \begin{cases} \text{major} & E > \Theta,\ \text{or previously major and } E > \Theta/3\\ \text{minor} & E < -\Theta,\ \text{or previously minor and } E < -\Theta/3\\ \text{undecided} & \text{otherwise.}\end{cases} $$
+<p>While undecided the display shows a lean, which switches sides only when \(E\) crosses \(\mp 0.5\), and says "or" the relative key. A different pair starts afresh.</p>
+
+<!-- ====================================================================== -->
+<h2>10 Confidence and decision gates</h2>
+<p><strong>Evidence needed.</strong> A scattered singer's evidence is weaker, so decisions need more of it. With the key spread \(\sigma_K = \max(\text{key-level spread}, \sigma_c)\) in cents (after 4 notes):</p>
+$$ \eta = \clamp\big(1 + (\sigma_K - 20)/20,\ 1,\ 2\big). $$
+<p>\(\eta\) scales the major/minor threshold (section 9.6) and divides the displayed key confidence.</p>
+<p><strong>Is the pair clear?</strong> For Voices, the key is labelled a best guess unless the sung notes clearly point to one pair. With at least 16 notes, the best melodic key's pair must lead the best key of any other pair by</p>
+$$ S_1 - S_{\text{other}} \ \ge\ 0.05 + 0.006\,\max(\sigma_K - 10,\ 0), $$
+<p>and the last \(k = \min(16, \lfloor n/2\rfloor)\) notes and the \(k\) before them must each, on their own, rank a key of the same pair first. A drift the tracker failed to follow, or a singer too scattered to read, fails one test or the other.</p>
+<p><strong>Settling bar.</strong> The thin line under the key fills over 6 s of the key being held: \(\clamp(t_{\text{held}}/6\,\mathrm s, 0, 1)\), capped at one half while the pair or the major/minor choice is undecided, and full when the user presses Hold.</p>
+
+<!-- ====================================================================== -->
+<h2>11 Onsets, tempo and beat phase</h2>
+
+<h3>11.1 Onset strength</h3>
+<p>Each hop, a 2048-point spectrum of the newest samples is log-compressed, and positive increases are summed (spectral flux). Before differencing, the previous frame is widened by a maximum filter over \(\pm 2\) bins, so a note wobbling with vibrato does not register as a stream of onsets (SuperFlux [4]):</p>
+$$ L_t[k] = \ln\!\big(1 + \gamma_o A_t[k]\big),\qquad \tilde L_{t-1}[k] = \max_{|j-k|\le 2} L_{t-1}[j],\qquad o_t = \sum_{k=k_0}^{k_1} \big(1 + b\cdot\mathbf 1[k \le k_b]\big)\max\!\big(0,\ L_t[k] - \tilde L_{t-1}[k]\big). $$
+<p>The compression \(\gamma_o\) (20 for Band, 10 otherwise), band \([k_0, k_1]\), and low-band boost \(b\) (1.5 below 250 Hz for Band, so kick and bass carry the beat) come from the preset.</p>
+
+<h3>11.2 Periodicity</h3>
+<p>The last 8 s of onset strength (689 frames at 86.13 frames/s) are kept. Each estimate (from 3 s of history on) smooths them with a \([\frac14, \frac12, \frac14]\) kernel, so a beat between two frames still correlates with itself, and removes a moving average of half-width 0.75 s (65 frames) to keep rhythm and drop loudness: \(\hat o_i = \bar o_i - \text{mean}_{|j-i|\le 65}\,\bar o_j\). The autocorrelation is normalised per lag:</p>
+$$ \mathcal A(\tau) = \frac{\frac{1}{n-\tau}\sum_{i=\tau}^{n-1}\hat o_i\,\hat o_{i-\tau}}{\frac1n\sum_{i=0}^{n-1}\hat o_i^2},\qquad \tau \in [\tau_{\min}, \tau_{\max}] = \Big[\Big\lfloor\frac{60 F}{220}\Big\rfloor, \Big\lceil\frac{60 F}{40}\Big\rceil\Big] = [23, 130], $$
+<p>with \(F = f_s/H\) frames per second, and is computed up to \(2\tau_{\max}\).</p>
+
+<h3>11.3 Tempo prior and score</h3>
+<p>People mostly tap between 60 and 160 BPM. A log-normal prior centred on 120 BPM with a width of 0.55 octaves (Figure 3) multiplies each lag's own periodicity and a bonus for periodicity at twice the lag, as a real beat's bar level has:</p>
+$$ \mathrm{BPM}(\tau) = \frac{60F}{\tau},\qquad P(\tau) = \exp\!\Big(-\frac12\Big(\frac{\log_2(\mathrm{BPM}(\tau)/120)}{0.55}\Big)^2\Big),\qquad \Sigma(\tau) = P(\tau)\,\mathcal A^+(\tau)\,\big(1 + \tfrac12\mathcal A^+(2\tau)\big), $$
+<p>where \(\mathcal A^+ = \max(\mathcal A, 0)\). The bonus can strengthen a lag that is a pulse in its own right but cannot rescue one that is not.</p>
+<figure>
+<!--include: figures/fig_prior.svg-->
+<figcaption>Figure 3. The tempo prior \(P\). Halving 120 BPM to 60 costs a factor of about 5; going to 180 costs about 2.</figcaption>
+</figure>
+
+<h3>11.4 Salience re-ranking</h3>
+<p>Local maxima of \(\Sigma\) are candidate periods. The best five are re-ranked by beat salience: the mean squared onset strength sampled on that period's best-phase grid over the last 8 beats (\(\pm 1\) frame of jitter allowed). This separates, for example, a 6/8 dotted-quarter pulse from its pairs of eighths, which autocorrelate similarly but sound very differently loud on the grid:</p>
+$$ \Lambda(\tau) = \max_{\phi \in [0, \tau)} \frac{1}{B}\sum_{b=0}^{B-1}\Big(\max_{|j|\le 1} \hat o^{\,+}_{\,n-1-\phi-b\tau+j}\Big)^2,\qquad \text{final}(\tau) = \Sigma(\tau)\,\frac{\Lambda(\tau)}{\max_{\tau'}\Lambda(\tau')} . $$
+
+<h3>11.5 Octave hysteresis, refinement, lock</h3>
+<p>Once a tempo is locked, a winner related to it by \(2, \tfrac12, 3, \tfrac13, \tfrac32\) or \(\tfrac23\) (within 6%) must win four estimates in a row (about 2 s) before the tempo jumps; until then the locked period is kept while it remains in the shortlist. The winning lag is refined by a parabola through \(\Sigma\) at \(\tau - 1, \tau, \tau + 1\), and the reported period is the median of the last five refined periods. The tempo counts as <em>locked</em> when five are in and \(\max/\min < 1.04\). It is shown while \(\mathcal A(\tau) \ge 0.12\), held through up to six weak updates (3 s), then released.</p>
+
+<h3>11.6 Phase and the displayed beat</h3>
+<p>The phase is the \(\phi\) that maximises \(\Lambda\) for the chosen period. It fixes the time of the last beat, \(t_a\) (the anchor), and the period \(T\); the screen then extrapolates without new analysis, \(t_{\text{beat}} = t_a + \big\lfloor (t_{\text{now}} - t_a)/T\big\rfloor\,T\), and advances the bar position by the same count.</p>
+
+<!-- ====================================================================== -->
+<h2>12 Time signature</h2>
+<h3>12.1 Accent sequence</h3>
+<p>Given the period \(T\) (in frames) and the newest beat position, the detrended onset strength is sampled on a grid of step \(T/q\) for divisors \(q \in \{1, 2, 5, 7\}\), taking the maximum within \(\pm\) one eighth of a step. A grid finer than 7.5 frames (87 ms) is skipped, and at least 8 beats are needed (12 for Voices). Each sequence is z-scored to \(z_1, \dots, z_n\).</p>
+
+<h3>12.2 Templates and folding</h3>
+<p>Bar templates of \(m\) beats encode accents and are z-scored too:</p>
+<table>
+  <tr><th>Bar</th><th>Accents</th><th class="num">Prior</th><th>Grids</th></tr>
+  <tr><td>2</td><td>1, .2</td><td class="num">0.90</td><td>\(q=1\)</td></tr>
+  <tr><td>3</td><td>1, .3, .3</td><td class="num">1.00</td><td>\(q=1\)</td></tr>
+  <tr><td>4</td><td>1, .2, .6, .2</td><td class="num">1.05</td><td>\(q=1\)</td></tr>
+  <tr><td>5 (2+3, 3+2)</td><td>1, .2, .6, .2, .2 · 1, .2, .2, .6, .2</td><td class="num">0.85</td><td>\(q = 1, 2, 5\)</td></tr>
+  <tr><td>6</td><td>1, .25, .25, .55, .25, .25</td><td class="num">0.95</td><td>\(q = 1, 2\)</td></tr>
+  <tr><td>7 (2+2+3, 3+2+2, 2+3+2)</td><td>1, .2, .6, .2, .6, .2, .2 · …</td><td class="num">0.85</td><td>\(q = 1, 2, 7\)</td></tr>
+</table>
+<p>For each template and each downbeat offset \(\varphi \in [0, m)\), the sequence is folded into an average bar \(\bar z_j = \text{mean}\{z_i : (i - \varphi) \bmod m = j\}\) and scored by its fit to the template and by the sequence's periodicity at the bar length:</p>
+$$ \text{fit} = \frac1m\big\langle \operatorname{z}(\bar z), \operatorname{z}(\mathbf t)\big\rangle,\qquad \text{per} = \max\!\Big(0,\ \frac{\sum_{i\ge m} z_i z_{i-m}}{\sum_i z_i^2}\cdot\frac{n}{n-m}\Big),\qquad \text{score} = \pi_q\,\pi_m\,(0.65\,\text{fit} + 0.35\,\text{per}). $$
+<p><strong>Grid prior.</strong> A finer grid earns its prior only if there is real energy between the tracked beats. With \(\varrho_q\) the mean off-beat strength over the mean on-beat strength on that grid, \(\pi_q = 0.6 + (\pi_q^0 - 0.6)\,\clamp(\varrho_q/0.35, 0, 1)\) with \(\pi^0 = (1.00, 1.05, 0.90, 0.90)\) for \(q = (1, 2, 5, 7)\). This keeps 5/4 and 7/8 from appearing on ordinary music.</p>
+
+<h3>12.3 Simple or compound</h3>
+<p>Summed over beats, let \(B\), \(H_{1/2}\), \(H_{1/3}\), \(H_{2/3}\) be the windowed maxima at the beat, half way, and one and two thirds of the way to the next beat. The beat divides in three when</p>
+$$ \min(H_{1/3}, H_{2/3}) > 0.35\max(H_{1/3}, H_{2/3}),\qquad \tfrac12(H_{1/3} + H_{2/3}) > 1.3\,H_{1/2},\qquad \tfrac12(H_{1/3} + H_{2/3}) > 0.25\,B . $$
+<p>Requiring both thirds rules out a swung eighth, which sits at two thirds alone and is duple. When compound, the priors for 2, 3 and 4 beats become 1.00, 0.95, 0.95 (in compound time a bar of two, 6/8, is the usual case), and the labels become 6/8, 9/8, 12/8.</p>
+
+<h3>12.4 Three or six</h3>
+<p>Two bars of three fold into a six whose fourth beat is as strong as its first; a real 6/8 has a weaker secondary accent there. If three wins on the tracked pulse but a six-fold (on the pulse or the half-pulse) fits with \(\text{fit} \ge 0.9\) and \(\bar z_3 < 0.8\,\bar z_0\), \(\bar z_3 > \bar z_1\), \(\bar z_3 > \bar z_5\), the answer is 6/8, counted in two.</p>
+
+<h3>12.5 Confidence and display</h3>
+<p>\(\kappa_m = \tfrac12\clamp(\text{fit}_{\text{best}}, 0, 1) + \tfrac12\clamp\big((\text{score}_1 - \text{score}_2)/\text{score}_1, 0, 1\big)\), the runner-up being the best other bar length. A new label must win three updates in a row (1.5 s). When the winning grid is finer or coarser than the tracked pulse, the counted pulse is a multiple of it: \(1/q\) in general, \(3/2\) for 6/8 tracked at two eighths, 3 for 6/8 tracked at the eighth. The displayed BPM and beat dots follow the counted pulse.</p>
+
+<!-- ====================================================================== -->
+<h2>13 Tapped tempo</h2>
+<p>In the Voices preset the tempo is not read from the sound; singing rarely gives a steady pulse (in testing, the detected metre for unaccompanied singing was right in 3 of 36 takes). The player taps instead. With tap times \(\tau_1 < \dots < \tau_k\) (at most the last 8):</p>
+$$ \mathrm{BPM} = \clamp\!\Big(\frac{60}{\median_j(\tau_{j+1} - \tau_j)},\ 30,\ 300\Big), $$
+<p>shown from the second tap. The median ignores one early or late tap. A gap over 2.5 s starts a new count, and a tap within 150 ms of the last (a bouncing finger) is ignored. The pulse dot is anchored to the last tap: phase \(= ((t - \tau_k)\,\mathrm{BPM}/60) \bmod 1\).</p>
+
+<!-- ====================================================================== -->
+<h2>14 Display arithmetic</h2>
+<p><strong>Tuning reference.</strong> The user may set the band's A between 430 and 450 Hz. Every displayed deviation is measured from it:</p>
+$$ c_{\text{shown}} = c_{440} - 1200\log_2\frac{f_{\text{ref}}}{440}, \qquad\text{e.g. } f_{\text{ref}} = 442 \Rightarrow -7.85\ \text{cents}. $$
+<p>The value is not wrapped, so it stays consistent with the key name computed on the 440 grid. "In tune" means \(|c_{\text{shown}}| < 10\) cents. The dial maps \(\clamp(c, -50, 50)\) linearly onto a 100° arc.</p>
+<p><strong>Level meter.</strong> \(\ell = \clamp\big((20\log_{10}\mathrm{RMS} + 60)/60, 0, 1\big)\), so −60 dBFS to 0 dBFS fills the indicator.</p>
+<p><strong>Key signature and spelling.</strong> For a key with major-equivalent tonic \(t_M\) (the tonic itself, or the relative major), the position on the circle of fifths gives the signature, and flat keys are spelled with flats:</p>
+$$ \phi = 7\,t_M \bmod 12,\qquad \text{sig} = \begin{cases}\phi & \phi \le 6\ (\text{sharps})\\ \phi - 12 & \phi > 6\ (\text{flats})\end{cases} $$
+<p>(G: \(\phi = 1\), one sharp; F: \(\phi = 11\), one flat; F♯ and G♭ both give \(\phi = 6\) and are spelled with sharps.) Fixed-Do naming replaces the letter only (C→Do, …, B→Si), keeping accidentals and chord suffixes.</p>
+<p><strong>Transposition and numbers.</strong> Transposing by \(\Delta \in [-6, 6]\) semitones maps every key and chord root \(r \mapsto (r + \Delta) \bmod 12\). A chord's Nashville number and Roman numeral come from its interval \(i = (r - t) \bmod 12\) above the tonic, through the tables \(i \mapsto \)(1, ♭2, 2, ♭3, 3, 4, ♯4, 5, ♭6, 6, ♭7, 7) for major keys and (1, ♭2, 2, 3, ♯3, 4, ♯4, 5, 6, ♯6, 7, ♯7) for minor keys, with the chord-type suffix appended.</p>
+
+<!-- ====================================================================== -->
+<h2>15 Cost, latency and limitations</h2>
+<h3>15.1 Cost per second of audio (44.1 kHz)</h3>
+<table>
+  <tr><th>Stage</th><th>Rate</th><th>Dominant cost</th></tr>
+  <tr><td>Onset flux</td><td class="num">86 /s</td><td>2048-point FFT</td></tr>
+  <tr><td>Pitch-class profile</td><td class="num">21.5 /s</td><td>8192- and 16384-point FFTs, two median sorts</td></tr>
+  <tr><td>Pitch tracker (Voices)</td><td class="num">21.5 /s</td><td>direct autocorrelation, \(\approx 587 \times 2048\) multiply-adds</td></tr>
+  <tr><td>Chord HMM</td><td class="num">2–5 /s</td><td>\(O(85 \cdot 12)\) per observation (linear-time Viterbi)</td></tr>
+  <tr><td>Key-level tracker (Voices)</td><td>per closed note</td><td>3 Viterbi passes, \(O(n \cdot 120 \cdot 61)\), \(n \le 400\)</td></tr>
+  <tr><td>Tempo, metre, song key</td><td class="num">2 /s</td><td>autocorrelation to \(2\tau_{\max}\) over \(\le 689\) frames; template folding</td></tr>
+</table>
+<h3>15.2 Latency</h3>
+<table>
+  <tr><th>Output</th><th>Earliest</th><th>Typical to settle</th></tr>
+  <tr><td>Key (profiles)</td><td>1 s</td><td>a few seconds; memory \(\tau\) = 8–10 s; switch needs 0.56 s of clear lead</td></tr>
+  <tr><td>Key (melody)</td><td>8 notes</td><td>switch needs 1.7 s of clear lead; major/minor waits for resting notes</td></tr>
+  <tr><td>Chord</td><td>3 observations after it ends</td><td>0.6–1 s, about 1.5–2 beats at 120 BPM</td></tr>
+  <tr><td>Song key from chords</td><td>4 s of chords</td><td>shown after 2 s of confidence ≥ 0.4</td></tr>
+  <tr><td>Tempo</td><td>3 s</td><td>locked after 5 agreeing estimates (≈ 2.5 s more)</td></tr>
+  <tr><td>Time signature</td><td>8 beats (12 Voices)</td><td>plus 3 agreeing updates</td></tr>
+</table>
+<h3>15.3 Limitations</h3>
+<ul>
+  <li><strong>Hand-set parameters.</strong> Every weight, threshold and prior in this document was chosen from music theory and adjusted against synthetic recordings and a small number of real ones. None was learned from a labelled corpus, and the accuracy on real rooms, phones and singers has not been measured at scale.</li>
+  <li><strong>Major or minor is the weakest decision.</strong> It rests on resting notes, the leading tone and cadences (section 9). Modal songs, songs that end away from the tonic, and short clips can leave it undecided or wrong.</li>
+  <li><strong>Profiles assume one key.</strong> Blues, modal tunes and passages full of chromatic passing chords pull the correlation toward a neighbouring key.</li>
+  <li><strong>Tempo is ambiguous by octave.</strong> The prior and salience re-ranking choose a level, but double and half tempo remain plausible readings; the user can switch them.</li>
+  <li><strong>Chords are simplified</strong> to 7 types; extensions beyond the seventh map to the nearest template.</li>
+  <li><strong>Pitch tracking assumes one voice.</strong> Unison singing still has a single period, but harmony parts lower the autocorrelation clarity, and frames below 0.55 are dropped. This has not been measured on real choirs.</li>
+  <li><strong>The singer and level models need material:</strong> 4 notes before the spread is trusted, 8 for melodic keys, 16 notes and 6 s before wandering is modelled.</li>
+</ul>
+
+<!-- ====================================================================== -->
+<h2>16 References</h2>
+<ol class="sans" style="font-size: 9pt">
+  <li>C. L. Krumhansl and E. J. Kessler, "Tracing the dynamic changes in perceived tonal organization in a spatial representation of musical keys," <em>Psychological Review</em> 89(4), 1982. C. L. Krumhansl, <em>Cognitive Foundations of Musical Pitch</em>, Oxford University Press, 1990.</li>
+  <li>D. Temperley, <em>The Cognition of Basic Musical Structures</em>, MIT Press, 2001 (key profiles for melodies).</li>
+  <li>T. Fujishima, "Realtime chord recognition of musical sound: a system using Common Lisp Music," <em>Proc. ICMC</em>, 1999 (pitch-class profiles and chord templates).</li>
+  <li>S. Böck and G. Widmer, "Maximum filter vibrato suppression for onset detection," <em>Proc. DAFx</em>, 2013 (SuperFlux).</li>
+  <li>D. P. W. Ellis, "Beat tracking by dynamic programming," <em>Journal of New Music Research</em> 36(1), 2007.</li>
+  <li>L. R. Rabiner, "A tutorial on hidden Markov models and selected applications in speech recognition," <em>Proc. IEEE</em> 77(2), 1989.</li>
+  <li>K. V. Mardia and P. E. Jupp, <em>Directional Statistics</em>, Wiley, 2000 (mean resultant length and its null distribution).</li>
+  <li>F. R. Hampel, "The influence curve and its role in robust estimation," <em>JASA</em> 69, 1974 (median absolute deviation, factor 1.4826).</li>
+  <li>J. O. Smith, <em>Spectral Audio Signal Processing</em>, W3K Publishing, 2011 (quadratic interpolation of spectral peaks).</li>
+  <li>P. de la Cuadra, A. Master and C. Sapp, "Efficient pitch detection techniques for interactive music," <em>Proc. ICMC</em>, 2001 (autocorrelation pitch tracking and octave errors).</li>
+</ol>
+
+<!-- ====================================================================== -->
+<h2 class="page-break">Appendix A. Parameters by preset</h2>
+<table>
+  <tr><th>Parameter</th><th class="num">Band</th><th class="num">Guitar</th><th class="num">Voices</th></tr>
+  <tr><td>Onset band</td><td class="num">30–8000 Hz</td><td class="num">60–6000 Hz</td><td class="num">150–5000 Hz</td></tr>
+  <tr><td>Onset compression \(\gamma_o\)</td><td class="num">20</td><td class="num">10</td><td class="num">10</td></tr>
+  <tr><td>Low-band boost \(b\) (below)</td><td class="num">1.5 (250 Hz)</td><td class="num">—</td><td class="num">—</td></tr>
+  <tr><td>Chroma band</td><td class="num">55–3000 Hz</td><td class="num">70–2500 Hz</td><td class="num">80–2000 Hz</td></tr>
+  <tr><td>Overtone roll-off \(f_r\)</td><td class="num">1000 Hz</td><td class="num">800 Hz</td><td class="num">1000 Hz</td></tr>
+  <tr><td>Key memory \(\tau\)</td><td class="num">8 s</td><td class="num">8 s</td><td class="num">10 s</td></tr>
+  <tr><td>Tempo prior</td><td class="num">120 BPM, 0.55 oct</td><td class="num">120 BPM, 0.55 oct</td><td class="num">120 BPM, 0.55 oct</td></tr>
+  <tr><td>Beats before a metre</td><td class="num">8</td><td class="num">8</td><td class="num">12</td></tr>
+  <tr><td>Melody, singer and level models</td><td class="num">off</td><td class="num">off</td><td class="num">on</td></tr>
+  <tr><td>Tempo and metre shown</td><td class="num">read</td><td class="num">read</td><td class="num">tapped</td></tr>
+</table>
+<h3>Engine constants</h3>
+<table>
+  <tr><th>Stage</th><th>Constant</th><th class="num">Value</th></tr>
+  <tr><td>Front end</td><td>Hop; tonal frame; rhythm update</td><td class="num">512; 4 hops; 43 hops</td></tr>
+  <tr><td>Chroma</td><td>Crossover; peak threshold; grid move (\(\rho\), \(|\bar\varepsilon|\), interval)</td><td class="num">260 Hz; 4× median; 0.5, 15 c, 2 s</td></tr>
+  <tr><td>Key</td><td>Min. confidence; lead; frames to switch</td><td class="num">0.15; 0.05; 12</td></tr>
+  <tr><td>Chords</td><td>\(\beta\); no-chord; key affinity; chord length; lag</td><td class="num">12; 0.58; 1.5; 1.5 s; 4</td></tr>
+  <tr><td>Song key</td><td>Promote / demote; runs; min. chords</td><td class="num">0.4 / 0.25; 4; 4 s</td></tr>
+  <tr><td>Pitch</td><td>Frame; range; level; clarity; first-peak ratio</td><td class="num">2048; 70–1000 Hz; 0.004; 0.55; 0.85</td></tr>
+  <tr><td>Notes</td><td>Hold; gap; min. length; steady window; steady share</td><td class="num">0.6 st; 80 ms; 120 ms; 0.2 s; 25%</td></tr>
+  <tr><td>Singer</td><td>Memory; step gain; spread clamp</td><td class="num">8 s; 0.8\(\xi^2\); 0.1–0.35 st</td></tr>
+  <tr><td>Key level</td><td>States; drift; step cost; band; floor \(\epsilon\)</td><td class="num">120 × 10 c; 150 c²/s; 6; ±300 c; 0.05</td></tr>
+  <tr><td>Major/minor</td><td>Threshold; keep; lean band; prior; full evidence</td><td class="num">1.5\(\eta\); 1/3; 0.5; 0.25; 8 s</td></tr>
+  <tr><td>Tempo</td><td>History; range; trend half-width; lock spread; min. strength</td><td class="num">8 s; 40–220 BPM; 0.75 s; 4%; 0.12</td></tr>
+  <tr><td>Metre</td><td>Fit/periodicity mix; switch hits; min. grid</td><td class="num">0.65/0.35; 3; 7.5 frames</td></tr>
+  <tr><td>Tap</td><td>Taps; reset; bounce; clamp</td><td class="num">8; 2.5 s; 150 ms; 30–300 BPM</td></tr>
+</table>
+
+</body>
+</html>

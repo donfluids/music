@@ -21,6 +21,10 @@ Point the phone at the singing and it reports:
 
 Everything runs on the phone; no audio leaves the device.
 
+The mathematics behind every stage, with equations and the constants the code uses, is in
+[docs/math/KeyCatch-math.pdf](docs/math/KeyCatch-math.pdf) (source and build steps in
+`docs/math`).
+
 ## Using it
 
 1. Tap **Listen** and grant the microphone permission.
