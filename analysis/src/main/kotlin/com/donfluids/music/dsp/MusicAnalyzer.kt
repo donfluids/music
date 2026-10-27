@@ -143,8 +143,16 @@ class MusicAnalyzer(
     private var keyLevel: KeyLevelTracker.Level? = null
     private var nowShiftShown = 0
 
-    /** Sung notes for the key finders: moved back to the centre when the singers wander. */
-    private fun keyNotes(): List<SungNote> = keyLevel?.notes ?: segmenter.snapshot()
+    /**
+     * Sung notes for the key finders: moved back to the centre when the singers wander, and
+     * otherwise all on the singer's current grid. A note was segmented on the grid of its own
+     * time; once the grid has moved, an early note can sit a semitone from a late one of the
+     * same pitch, so each is re-read against the grid as it is now.
+     */
+    private fun keyNotes(): List<SungNote> = keyLevel?.notes ?: segmenter.snapshot().map { n ->
+        if (n.gridCents == singer.offsetCents) n
+        else SungNote(n.concertPitch - singer.offsetCents / 100.0, n.startSeconds, n.durationSeconds, singer.offsetCents)
+    }
     /**
      * The singer's spread for key decisions: the larger of the scatter around the wandering
      * curve and the scatter around the plain semitone grid. The first can understate a very
