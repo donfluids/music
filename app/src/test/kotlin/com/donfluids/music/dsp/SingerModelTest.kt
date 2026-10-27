@@ -53,6 +53,9 @@ class SingerModelTest {
             drift.observe(SungNote(seen, t, 0.6)); t += 0.7
         }
         assertTrue("offset ${drift.offsetCents}", drift.offsetCents < -35.0)
+        // The shown tuning follows (the last eight seconds' worth, so it lags the drift a
+        // little), and reads as one lean: offset plus leftover, no damping.
+        assertTrue("shown ${drift.currentCents}", drift.currentCents < -40.0)
         // Notes scattered at random say nothing about direction: the grid stays put.
         val rnd = java.util.Random(3)
         val scatter = SingerModel()
@@ -60,6 +63,32 @@ class SingerModelTest {
         // Well short of the 50 cents at which notes would be relabelled.
         assertTrue("offset ${scatter.offsetCents}", abs(scatter.offsetCents) < 25.0)
         assertTrue("spread ${scatter.spreadCents}", scatter.spreadCents > 25.0)
+    }
+
+    @Test
+    fun theShownTuningIsTheWholeLeanEvenForAScatteredSinger() {
+        // 43 cents sharp with 15 cents of scatter: the grid moves slowly, but the number on
+        // screen must say about 43 from early on, not a damped fraction of it.
+        val rnd = java.util.Random(7)
+        val m = SingerModel()
+        var t = 0.0
+        val shown = ArrayList<Double>()
+        for (i in 0 until 40) {
+            val truth = 43.0 + 15.0 * rnd.nextGaussian()
+            val seen = 60.0 + (truth - m.offsetCents) / 100.0
+            m.observe(SungNote(seen, t, 0.5)); t += 0.6
+            if (i in 6 until 20) shown += m.currentCents
+        }
+        // Halfway between two keys, the grid may settle on either side (+43 of C or -57 of C#);
+        // either way the shown lean is the whole distance from the named key.
+        val wrapped = shown.map { ((it - 43.0 + 50.0).mod(100.0)) - 50.0 }
+        assertEquals("shown ${shown.map { it.toInt() }} offset ${m.offsetCents}", 0.0, wrapped.average(), 8.0)
+        assertTrue("grid ${m.offsetCents}", m.offsetCents > -50.0 && m.offsetCents <= 50.0)
+        // And for a consistent singer the shown value and the grid agree.
+        val c = SingerModel()
+        t = 0.0
+        for (i in 0 until 20) { c.observe(SungNote(60.0 + (45.0 - c.offsetCents) / 100.0, t, 0.6)); t += 0.7 }
+        assertEquals(45.0, c.currentCents, 5.0)
     }
 
     @Test

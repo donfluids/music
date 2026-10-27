@@ -158,7 +158,7 @@
     <string name="limits_voices_lead">Only voices are singing.</string>
     <string name="limits_voices">Singing rarely gives a steady beat, so in Voices mode you tap the tempo in yourself.</string>
     <string name="limits_notes_heading">A few more honest notes</string>
-    <string name="limits_note_late">Chords show up about half a beat late, because KeyCatch listens a little ahead to be sure.</string>
+    <string name="limits_note_late">Chords show up about a second late, because KeyCatch listens a little ahead to be sure.</string>
     <string name="limits_note_simple">Rich chords are shown as the nearest simple one. A Cmaj9 might show as Cmaj7 or C.</string>
     <string name="limits_note_tuning">If your band tunes to something other than A = 440, set it in Settings so “in tune” means what you expect.</string>
     <string name="limits_note_new">KeyCatch is new, and we haven\'t tried it in every kind of room or with every kind of band yet.</string>

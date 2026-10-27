@@ -189,11 +189,17 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
     var offsetCents = 0.0
         private set
     /**
-     * Where the singer sits now, in cents from A = 440 Hz: the grid plus whatever consistent
-     * lean the recent notes still show. The grid itself moves cautiously; this is for display.
+     * Where the singer sits now, in cents from A = 440 Hz: the grid plus the full circular mean
+     * of the recent notes' leftover lean. The grid itself moves cautiously, by a share of that
+     * lean that depends on how consistent the notes are; the display must not be damped the
+     * same way, or a scattered singer 40 cents sharp would read as 15. The grid stays within
+     * half a semitone of concert pitch, so the key is named after the nearest concert key and
+     * this number says how far from it the singers sit; it may pass 50 while they drift.
      */
     var currentCents = 0.0
         private set
+    /** The leftover lean, unwrapped: an angle read as the nearest reading to the last one. */
+    private var leanCents = 0.0
     private var sumCos = 0.0
     private var sumSin = 0.0
     private var sumWeight = 0.0
@@ -238,10 +244,15 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
         sumCos += w * kotlin.math.cos(angle); sumSin += w * kotlin.math.sin(angle); sumWeight += w; sumWeightSq += w * w
         residuals += kotlin.math.abs(residual) to note.durationSeconds.coerceAtMost(1.5)
         notesSeen++
-        // A few notes' worth of evidence before the grid moves at all.
-        if (sumWeight < 1.0) return
         val resultant = kotlin.math.sqrt(sumCos * sumCos + sumSin * sumSin) / sumWeight
         val meanCents = kotlin.math.atan2(sumSin, sumCos) * 100.0 / (2 * PI)
+        // The leftover is an angle, so a singer 60 cents flat of the grid reads as 40 sharp; of
+        // the three readings a semitone apart, keep the one nearest the last, as a phase is
+        // unwrapped. The shown value is the whole lean, grid plus leftover.
+        leanCents = if (notesSeen == 1) meanCents else (-1..1).map { meanCents + 100.0 * it }.minBy { kotlin.math.abs(it - leanCents) }
+        currentCents = offsetCents + leanCents
+        // A few notes' worth of evidence before the grid moves at all.
+        if (sumWeight < 1.0) return
         // Even random notes line up a little by chance, about 1/sqrt(n) for n notes; only the
         // consistency beyond that counts, so a scattered singer does not walk the grid away.
         val chance = kotlin.math.sqrt(sumWeightSq) / sumWeight
@@ -249,17 +260,22 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
         // Consistent notes move the grid most of the way; scattered ones barely at all.
         val step = 0.8 * excess * excess * meanCents
         offsetCents += step
-        currentCents = offsetCents + (1 - 0.8 * excess) * excess * meanCents
+        leanCents -= step
         // The remembered notes are now that much nearer the grid: turn their average to match.
         val turn = -2 * PI * step / 100.0
         val c = kotlin.math.cos(turn); val s = kotlin.math.sin(turn)
         val nc = sumCos * c - sumSin * s
         sumSin = sumCos * s + sumSin * c
         sumCos = nc
+        // Singers more than half a semitone from concert pitch are nearer the next key: name
+        // that one. Notes are read against the current grid (see MusicAnalyzer.keyNotes), so
+        // every note changes label together, and the shown lean moves a semitone with them.
+        if (offsetCents > 50.0) offsetCents -= 100.0 else if (offsetCents <= -50.0) offsetCents += 100.0
+        currentCents = offsetCents + leanCents
     }
 
     fun reset() {
-        offsetCents = 0.0; currentCents = 0.0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
+        offsetCents = 0.0; currentCents = 0.0; leanCents = 0.0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
         residuals.clear(); notesSeen = 0
     }
 }
