@@ -8,6 +8,7 @@ import org.junit.Test
 import java.util.Random
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -98,12 +99,20 @@ class SingerRobustnessTest {
     }
 
     @Test
-    fun aDriftingSingerIsFollowedAndStillReadsC() {
+    fun aDriftingSingerIsFollowedAndTheTuningDescribesTheLatestNotes() {
+        // Sung in C, 80 cents flat by the end: nearer B than C. The key may say C (the song) or
+        // B (where the singers are now); never another pair. The tuning says how far the latest
+        // notes sit from the semitones they are named on, so it must match where they really
+        // are, 80 flat of C or 20 sharp of B, which are the same pitch.
+        val b = cMajor.transposed(-1)
         val rs = hear(Singing(15.0, 80.0, -80.0))
-        neverSureAndWrong(rs)
-        assertTrue(describe(rs), rs.all { it.displayKey == cMajor })
-        // The drift has been followed: either they now read in B, or still in C but well flat.
-        assertTrue(describe(rs), rs.all { it.keyNow == cMajor.transposed(-1) || it.tuningCents < -15f })
+        for (r in rs) {
+            val pairMajor = RelativeKeyResolver.pair(r.displayKey!!).first
+            assertTrue(describe(rs), pairMajor == cMajor || pairMajor == b)
+            if (r.modeDecided) assertTrue(describe(rs), r.displayKey == cMajor || r.displayKey == b)
+            val off = Math.floorMod((r.tuningCents - 20f).roundToInt(), 100).let { minOf(it, 100 - it) }
+            assertTrue(describe(rs), off <= 30)
+        }
     }
 
     @Test

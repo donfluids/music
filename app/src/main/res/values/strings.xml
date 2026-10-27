@@ -81,6 +81,8 @@
         <item quantity="other">%d V–I cadences</item>
     </plurals>
     <string name="notes_heard">Notes heard</string>
+    <string name="pitch_tracker">Pitch tracker</string>
+    <string name="pitch_tracker_value">%1$s · %2$.1f ms per frame (46 ms available)</string>
     <string name="bar_length">Bar length</string>
     <string name="beats_n">%1$d beats</string>
     <string name="record_clip">Record clip for tuning</string>
@@ -119,6 +121,10 @@
     <string name="chords_as_names">Names</string>
     <string name="chords_as_numbers">Numbers</string>
     <string name="settings_chords_help">Numbers shows chords by their place in the key (Nashville numbers): 1, 4, 5, 6m.</string>
+    <string name="settings_pitch">Following the melody (Voices)</string>
+    <string name="pitch_standard">Standard</string>
+    <string name="pitch_crepe">CREPE</string>
+    <string name="settings_pitch_help">CREPE is a small neural network trained on singing. On 40 recorded singers it found the right note more often, most of all with background noise. It is new here: try both with your singers. Its cost per frame shows under Details.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do: C is always Do.</string>
     <string name="done">Done</string>
     <string name="back">Back</string>

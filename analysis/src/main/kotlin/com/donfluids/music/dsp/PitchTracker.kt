@@ -17,19 +17,20 @@ class PitchTracker(
     maxHz: Double = 1000.0,
     private val minLevel: Double = 0.004,
     private val minClarity: Double = 0.55,
-) {
+) : PitchEstimator {
     private val lagMin = (sampleRate / maxHz).toInt().coerceAtLeast(2)
     private val lagMax = (sampleRate / minHz).toInt().coerceAtMost(frameSize / 2)
     private val window = Fft.hannWindow(frameSize)
     private val x = FloatArray(frameSize)
 
-    var hz: Double = 0.0; private set
-    var clarity: Double = 0.0; private set
+    override var hz: Double = 0.0; private set
+    override var clarity: Double = 0.0; private set
     /** Fractional MIDI note of [hz] against A4 = 440 Hz. */
-    val midi: Double get() = 69.0 + 12.0 * log2(hz / 440.0)
+    override val midi: Double get() = 69.0 + 12.0 * log2(hz / 440.0)
+    override val samplesNeeded: Int get() = frameSize
 
     /** Analyses the [frameSize] samples ending at [end] (exclusive) in [buffer]. Returns true if voiced. */
-    fun process(buffer: FloatArray, end: Int): Boolean {
+    override fun process(buffer: FloatArray, end: Int): Boolean {
         val start = end - frameSize
         var energy = 0.0
         for (i in 0 until frameSize) { x[i] = buffer[start + i] * window[i]; energy += x[i].toDouble() * x[i] }
@@ -48,7 +49,9 @@ class PitchTracker(
         }
         if (best < 0 || bestVal < minClarity) return false
         var chosen = best
-        for (lag in lagMin until best) {
+        // Interior peaks only: acf[lagMin - 1] is never filled, so the shortest lag would always
+        // look like a peak, and a low note (110 Hz and below) read as 1 kHz.
+        for (lag in lagMin + 1 until best) {
             if (acf[lag] >= 0.85 * bestVal && acf[lag] >= acf[lag - 1] && acf[lag] >= acf[lag + 1]) { chosen = lag; break }
         }
         val a = acf[(chosen - 1).coerceAtLeast(lagMin)]; val b = acf[chosen]; val c = acf[(chosen + 1).coerceAtMost(lagMax)]
@@ -198,7 +201,7 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
      */
     var currentCents = 0.0
         private set
-    /** The leftover lean, unwrapped: an angle read as the nearest reading to the last one. */
+    /** The leftover lean: the notes' circular mean distance from the grid, within half a semitone. */
     private var leanCents = 0.0
     private var sumCos = 0.0
     private var sumSin = 0.0
@@ -207,6 +210,13 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
     private var lastUpdate = Double.NaN
     private val residuals = ArrayList<Pair<Double, Double>>() // |cents from grid|, weight
     var notesSeen = 0
+        private set
+    /**
+     * Semitones the note labels have moved since the start: +1 each time the grid steps down a
+     * semitone to stay within half a semitone of concert pitch (every note then reads one higher),
+     * -1 for a step up. Whatever names keys from those labels must move with it.
+     */
+    var relabelSemitones = 0
         private set
 
     /**
@@ -246,17 +256,18 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
         notesSeen++
         val resultant = kotlin.math.sqrt(sumCos * sumCos + sumSin * sumSin) / sumWeight
         val meanCents = kotlin.math.atan2(sumSin, sumCos) * 100.0 / (2 * PI)
-        // The leftover is an angle, so a singer 60 cents flat of the grid reads as 40 sharp; of
-        // the three readings a semitone apart, keep the one nearest the last, as a phase is
-        // unwrapped. The shown value is the whole lean, grid plus leftover.
-        leanCents = if (notesSeen == 1) meanCents else (-1..1).map { meanCents + 100.0 * it }.minBy { kotlin.math.abs(it - leanCents) }
+        // Even random notes line up a little by chance, about 1/sqrt(n) for n notes; only the
+        // consistency beyond that counts, so a scattered singer does not walk the grid away.
+        val chance = if (sumWeight > 0) kotlin.math.sqrt(sumWeightSq) / sumWeight else 1.0
+        val excess = if (chance < 1.0) ((resultant - chance) / (1 - chance)).coerceIn(0.0, 1.0) else 0.0
+        // The shown value is the whole lean, grid plus leftover. The leftover is read within half
+        // a semitone of the grid, the same rounding that names each note, so the number always
+        // describes the notes as labelled. Holding a reading past 50 so it would not flip sign
+        // was tried: a singer sitting near 50 then read a semitone off the notes' own names.
+        leanCents = meanCents
         currentCents = offsetCents + leanCents
         // A few notes' worth of evidence before the grid moves at all.
         if (sumWeight < 1.0) return
-        // Even random notes line up a little by chance, about 1/sqrt(n) for n notes; only the
-        // consistency beyond that counts, so a scattered singer does not walk the grid away.
-        val chance = kotlin.math.sqrt(sumWeightSq) / sumWeight
-        val excess = ((resultant - chance) / (1 - chance)).coerceIn(0.0, 1.0)
         // Consistent notes move the grid most of the way; scattered ones barely at all.
         val step = 0.8 * excess * excess * meanCents
         offsetCents += step
@@ -270,12 +281,13 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
         // Singers more than half a semitone from concert pitch are nearer the next key: name
         // that one. Notes are read against the current grid (see MusicAnalyzer.keyNotes), so
         // every note changes label together, and the shown lean moves a semitone with them.
-        if (offsetCents > 50.0) offsetCents -= 100.0 else if (offsetCents <= -50.0) offsetCents += 100.0
+        if (offsetCents > 50.0) { offsetCents -= 100.0; relabelSemitones++ }
+        else if (offsetCents <= -50.0) { offsetCents += 100.0; relabelSemitones-- }
         currentCents = offsetCents + leanCents
     }
 
     fun reset() {
-        offsetCents = 0.0; currentCents = 0.0; leanCents = 0.0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
+        offsetCents = 0.0; currentCents = 0.0; leanCents = 0.0; relabelSemitones = 0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
         residuals.clear(); notesSeen = 0
     }
 }

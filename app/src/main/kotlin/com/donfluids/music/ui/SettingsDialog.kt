@@ -36,9 +36,11 @@ fun SettingsDialog(
     referenceHz: Int,
     naming: NoteNaming,
     nashville: Boolean,
+    crepe: Boolean,
     onReference: (Int) -> Unit,
     onNaming: (NoteNaming) -> Unit,
     onNashville: (Boolean) -> Unit,
+    onCrepe: (Boolean) -> Unit,
     onDone: () -> Unit,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -79,6 +81,15 @@ fun SettingsDialog(
                     onSelect = onNashville,
                 )
                 Text(stringResource(R.string.settings_chords_help), style = MaterialTheme.typography.bodySmall, color = muted)
+
+                Text(stringResource(R.string.settings_pitch), style = MaterialTheme.typography.labelLarge)
+                TwoWay(
+                    first = stringResource(R.string.pitch_standard),
+                    second = stringResource(R.string.pitch_crepe),
+                    secondSelected = crepe,
+                    onSelect = onCrepe,
+                )
+                Text(stringResource(R.string.settings_pitch_help), style = MaterialTheme.typography.bodySmall, color = muted)
             }
         },
         confirmButton = { TextButton(onClick = onDone) { Text(stringResource(R.string.done)) } },
