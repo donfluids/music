@@ -94,6 +94,9 @@ data class AnalysisResult(
     val songKeyConfidence: Float = 0f,
     val songKeyCadences: Int = 0,
     val songKeyAlternative: Key? = null,
+    /** Which melody pitch estimator runs, if any, and its average cost per frame in milliseconds. */
+    val pitchModel: String? = null,
+    val pitchMillis: Float = 0f,
 )
 
 /**
@@ -104,6 +107,11 @@ class MusicAnalyzer(
     val sampleRate: Int,
     val preset: AnalysisPreset = AnalysisPreset.BAND,
     val hopSize: Int = 512,
+    /**
+     * Builds the melody pitch estimator for a sample rate, for presets that follow the melody.
+     * The app passes CREPE; without one the autocorrelation tracker is used.
+     */
+    pitch: ((Int) -> PitchEstimator)? = null,
 ) {
     private val chromaExtractor = ChromaExtractor(
         sampleRate,
@@ -128,7 +136,8 @@ class MusicAnalyzer(
     )
     private val meterDetector = MeterDetector(minBeats = preset.meterMinBeats)
     private val chordTracker = ChordTracker()
-    private val pitchTracker = if (preset.melodicKey) PitchTracker(sampleRate) else null
+    private val pitchTracker: PitchEstimator? = if (preset.melodicKey) (pitch?.invoke(sampleRate) ?: PitchTracker(sampleRate)) else null
+    private var pitchMillis = 0.0
     /**
      * Pitch classes this device is itself sounding in audio captured at the given time
      * (System.nanoTime(); bit n = pitch class n, C = 0), so an app that plays music while it
@@ -179,6 +188,8 @@ class MusicAnalyzer(
     private var keyCandidate: Key? = null
     private var keyCandidateHits = 0
     private var shownKey: Key? = null
+    /** The singer model's relabelling already applied to the keys above. */
+    private var relabelApplied = 0
     private val keyHitsToSwitch = 12 // chroma frames, about half a second
 
     private var meterCandidate: String? = null
@@ -235,6 +246,7 @@ class MusicAnalyzer(
         pendingCount = 0
         hopIndex = 0
         keyCandidate = null
+        relabelApplied = 0
         keyCandidateHits = 0
         shownKey = null
         meterCandidate = null
@@ -361,7 +373,11 @@ class MusicAnalyzer(
         val now = hopIndex * hopSeconds
         // The device's own notes are not removed here: a singer in tune with the piano reads
         // exactly like it, and dropping those readings lost most of the melody when playing along.
-        if (!tracker.process(window, windowSize)) {
+        val started = System.nanoTime()
+        val voiced = tracker.process(window, windowSize)
+        // A running average of the cost, shown in Details so it can be checked on a real phone.
+        pitchMillis = 0.9 * pitchMillis + 0.1 * (System.nanoTime() - started) / 1e6
+        if (!voiced) {
             segmenter.push(Double.NaN, now)
             return
         }
@@ -370,6 +386,16 @@ class MusicAnalyzer(
     }
 
     private fun updateKey() {
+        // The singers drifted past half a semitone and the note labels moved one step: the keys
+        // named from them move too, at once, so the name on screen and the tuning beside it
+        // always refer to the same key.
+        val relabel = singer.relabelSemitones - relabelApplied
+        if (relabel != 0) {
+            relabelApplied = singer.relabelSemitones
+            shownKey = shownKey?.transposed(relabel)
+            keyCandidate = keyCandidate?.transposed(relabel)
+            pendingKey = pendingKey?.transposed(relabel)
+        }
         if (pitchTracker != null) {
             val notes = segmenter.snapshot()
             // The wandering model only takes over once there is enough singing to trust it and the
@@ -716,6 +742,8 @@ class MusicAnalyzer(
             songKeyConfidence = songKeyConfidence,
             songKeyCadences = songKeyCadences,
             songKeyAlternative = songKeyAlternative,
+            pitchModel = when (pitchTracker) { null -> null; is CrepePitch -> "CREPE-tiny"; else -> "autocorrelation" },
+            pitchMillis = pitchMillis.toFloat(),
         )
     }
 }

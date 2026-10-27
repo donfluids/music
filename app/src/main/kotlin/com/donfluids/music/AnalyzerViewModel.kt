@@ -12,6 +12,7 @@ import com.donfluids.music.audio.ClipRecorder
 import com.donfluids.music.audio.ClipStore
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
+import com.donfluids.music.dsp.CrepePitch
 import com.donfluids.music.dsp.MusicAnalyzer
 import com.donfluids.music.history.SongHistory
 import com.donfluids.music.history.SongRecord
@@ -62,6 +63,8 @@ data class UiState(
     /** The A the band tunes to, in Hz; "in tune" is measured from it. */
     val referenceHz: Int = 440,
     val naming: NoteNaming = NoteNaming.LETTERS,
+    /** Follow the sung melody with CREPE instead of the autocorrelation tracker (experimental). */
+    val crepe: Boolean = false,
     /** Songs heard, newest first, saved on the phone. */
     val history: List<SongRecord> = emptyList(),
     val showHistory: Boolean = false,
@@ -92,6 +95,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             nashville = prefs.getBoolean(PREF_NASHVILLE, false),
             referenceHz = prefs.getInt(PREF_REFERENCE, 440).coerceIn(MIN_REFERENCE_HZ, MAX_REFERENCE_HZ),
             naming = NoteNaming.byId(prefs.getString(PREF_NAMING, null)),
+            crepe = prefs.getBoolean(PREF_CREPE, false),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -146,7 +150,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             _state.update { it.copy(error = e.message ?: "Could not open the microphone") }
             return
         }
-        val newSession = Session(cap, MusicAnalyzer(cap.sampleRate, _state.value.preset))
+        val newSession = Session(cap, newAnalyzer(cap.sampleRate, _state.value.preset))
         holder.set(newSession)
         session = newSession
         _state.update { it.copy(listening = true, error = null, analysis = AnalysisResult(), heldKey = null, transpose = 0) }
@@ -190,6 +194,19 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
 
     private val tapTempo = TapTempo()
 
+    /**
+     * CREPE's weights, read once from the app's assets. If they cannot be read the analyser
+     * falls back to the autocorrelation tracker rather than failing.
+     */
+    private val crepeWeights: CrepePitch.Weights? by lazy {
+        runCatching { getApplication<Application>().assets.open(CREPE_ASSET).use { CrepePitch.Weights.read(it.readBytes()) } }.getOrNull()
+    }
+
+    private fun newAnalyzer(rate: Int, preset: AnalysisPreset): MusicAnalyzer {
+        val weights = if (preset.melodicKey && _state.value.crepe) crepeWeights else null
+        return MusicAnalyzer(rate, preset, pitch = weights?.let { w -> { r: Int -> CrepePitch(w, r) } })
+    }
+
     /** For screenshot tests only: shows a prepared state. */
     internal fun showStateForScreenshot(state: UiState) {
         runBlocking { historyLoaded.join() } // so the saved list cannot land on top of this one
@@ -211,7 +228,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     fun reset() {
         saveSong()
         clearTapTempo()
-        session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, _state.value.preset) }
+        session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, _state.value.preset) }
         recorder.get()?.analysisStartSeconds = 0f // the clip's chord filter follows the new clock
         _state.update { it.copy(analysis = AnalysisResult(), tempoMultiplier = 1f, heldKey = null, transpose = 0) }
     }
@@ -237,7 +254,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     fun setPreset(preset: AnalysisPreset) {
         if (preset == _state.value.preset) return
         prefs.edit().putString(PREF_PRESET, preset.id).apply()
-        session?.let { it.analyzer = MusicAnalyzer(it.capture.sampleRate, preset) }
+        session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, preset) }
         recorder.get()?.analysisStartSeconds = 0f
         _state.update { it.copy(preset = preset, analysis = AnalysisResult(), tempoMultiplier = 1f, heldKey = null, transpose = 0) }
     }
@@ -248,6 +265,19 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         val v = hz.coerceIn(MIN_REFERENCE_HZ, MAX_REFERENCE_HZ)
         prefs.edit().putInt(PREF_REFERENCE, v).apply()
         _state.update { it.copy(referenceHz = v) }
+    }
+
+    /** Switch the melody tracker. While listening in a melody preset, analysis starts over with it. */
+    fun setCrepe(enabled: Boolean) {
+        if (enabled == _state.value.crepe) return
+        prefs.edit().putBoolean(PREF_CREPE, enabled).apply()
+        _state.update { it.copy(crepe = enabled) }
+        val preset = _state.value.preset
+        if (preset.melodicKey) {
+            session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, preset) }
+            recorder.get()?.analysisStartSeconds = 0f
+            _state.update { it.copy(analysis = AnalysisResult(), heldKey = null) }
+        }
     }
 
     fun setNaming(naming: NoteNaming) {
@@ -395,6 +425,8 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         const val PREF_NASHVILLE = "nashville"
         const val PREF_CLIP_NOTICE = "clipNoticeAccepted"
         const val PREF_REFERENCE = "referenceHz"
+        const val CREPE_ASSET = "crepe-tiny.bin"
         const val PREF_NAMING = "naming"
+        const val PREF_CREPE = "crepe"
     }
 }

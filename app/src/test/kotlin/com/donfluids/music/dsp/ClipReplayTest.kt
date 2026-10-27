@@ -27,8 +27,10 @@ class ClipReplayTest {
             val labels = meta.optJSONObject("labels") ?: org.json.JSONObject()
             val presetId = meta.optString("preset", "band")
             val (rate, samples) = WavWriter.read(wav)
-            for (preset in AnalysisPreset.ALL) {
-                val analyzer = MusicAnalyzer(rate, preset)
+            // Voices twice: with the standard tracker and with CREPE, for comparison.
+            val runs: List<Pair<AnalysisPreset, ((Int) -> PitchEstimator)?>> = AnalysisPreset.ALL.map { it to null } + listOf(AnalysisPreset.VOICES to TestPitch.crepe)
+            for ((preset, pitch) in runs) {
+                val analyzer = MusicAnalyzer(rate, preset, pitch = pitch)
                 val chunk = 1024
                 var i = 0
                 while (i < samples.size) {
@@ -39,7 +41,7 @@ class ClipReplayTest {
                 val r = analyzer.result
                 val mark = if (preset.id == presetId) "*" else " "
                 println(
-                    "${wav.nameWithoutExtension} |$mark${preset.id} | " +
+                    "${wav.nameWithoutExtension} |$mark${preset.id}${if (pitch != null) "+crepe" else ""} | " +
                         "${labels.optString("key", "?")} / ${labels.optString("tempo", "?")} / ${labels.optString("meter", "?")} | " +
                         "${r.key?.label ?: "-"} (${"%.2f".format(r.keyConfidence)}) / " +
                         "${r.bpm?.let { "%.0f".format(it) } ?: "-"} / ${r.meterLabel ?: "-"} (${"%.2f".format(r.meterConfidence)}) | " +
