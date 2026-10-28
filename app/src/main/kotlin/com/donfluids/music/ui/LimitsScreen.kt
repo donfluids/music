@@ -83,6 +83,8 @@ fun LimitsScreen(onClose: () -> Unit) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Text(stringResource(R.string.limits_closing), style = MaterialTheme.typography.bodyLarge)
             Text(stringResource(R.string.limits_privacy), style = MaterialTheme.typography.bodyMedium, color = muted)
+            Heading(stringResource(R.string.limits_thanks_heading))
+            Text(stringResource(R.string.limits_thanks), style = MaterialTheme.typography.bodyMedium, color = muted)
             Spacer(Modifier.height(24.dp))
         }
     }

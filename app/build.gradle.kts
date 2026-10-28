@@ -98,10 +98,16 @@ dependencies {
     testImplementation(libs.org.json)
 }
 
-// Forward -Pclips.dir=<folder> to the test JVM so ClipReplayTest can find recorded clips.
+// Forward -Pclips.dir=<folder> to the test JVM so ClipReplayTest can find recorded clips, and
+// -Peval.dir=<folder> (plus optional -Peval.filter=<text>) for ChordKeyEvalTest.
 val clipsDir = providers.gradleProperty("clips.dir")
+val evalDir = providers.gradleProperty("eval.dir")
+val evalFilter = providers.gradleProperty("eval.filter")
 tasks.withType<Test>().configureEach {
     if (clipsDir.isPresent) systemProperty("clips.dir", clipsDir.get())
+    if (evalDir.isPresent) { systemProperty("eval.dir", evalDir.get()); maxHeapSize = "2g" }
+    if (evalFilter.isPresent) systemProperty("eval.filter", evalFilter.get())
+    providers.gradleProperty("eval.systems").orNull?.let { systemProperty("eval.systems", it) }
 }
 
 // Robolectric's Android system jar for the screenshot tests, fetched by Gradle (with its retries

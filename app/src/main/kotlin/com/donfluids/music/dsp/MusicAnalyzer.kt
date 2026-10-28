@@ -97,6 +97,10 @@ data class AnalysisResult(
     /** Which melody pitch estimator runs, if any, and its average cost per frame in milliseconds. */
     val pitchModel: String? = null,
     val pitchMillis: Float = 0f,
+    /** What hears the notes for chords and key: "Basic Pitch", or null for the spectral chroma. */
+    val notesModel: String? = null,
+    /** Its running cost in milliseconds per second of audio. */
+    val notesMillisPerSecond: Float = 0f,
 )
 
 /**
@@ -112,6 +116,11 @@ class MusicAnalyzer(
      * The app passes CREPE; without one the autocorrelation tracker is used.
      */
     pitch: ((Int) -> PitchEstimator)? = null,
+    /**
+     * Builds the note listener for a sample rate, for presets that read chords. When given,
+     * chords and key come from the notes it hears instead of the spectral chroma.
+     */
+    notes: ((Int) -> HeardNotes)? = null,
 ) {
     private val chromaExtractor = ChromaExtractor(
         sampleRate,
@@ -138,6 +147,16 @@ class MusicAnalyzer(
     private val chordTracker = ChordTracker()
     private val pitchTracker: PitchEstimator? = if (preset.melodicKey) (pitch?.invoke(sampleRate) ?: PitchTracker(sampleRate)) else null
     private var pitchMillis = 0.0
+    private val heard: HeardNotes? = if (!preset.melodicKey) notes?.invoke(sampleRate) else null
+    /** How far behind the audio the chord and key finders read when [heard] is used, in hops. */
+    private var readBehindHops: Long = heard?.let { behindHops(it) } ?: 0L
+    private fun behindHops(h: HeardNotes) = kotlin.math.ceil(h.delaySeconds * sampleRate / hopSize).toLong()
+    private val heardFrame = FloatArray(12)
+    private val heardAccum = FloatArray(12)
+    private var heardWeight = 0.0
+    /** Pitch-class energy for the key finders: the heard notes' memory, or the spectral one. */
+    private fun keyChroma(): FloatArray = if (heard != null) heardAccum else chromaExtractor.accumulatedChroma
+    private fun keyWeight(): Double = if (heard != null) heardWeight else chromaExtractor.accumulatedWeight
     /**
      * Pitch classes this device is itself sounding in audio captured at the given time
      * (System.nanoTime(); bit n = pitch class n, C = 0), so an app that plays music while it
@@ -240,6 +259,10 @@ class MusicAnalyzer(
 
     fun reset() {
         chromaExtractor.reset()
+        heard?.reset()
+        heardFrame.fill(0f)
+        heardAccum.fill(0f)
+        heardWeight = 0.0
         onsetDetector.reset()
         tempoTracker.reset()
         window.fill(0f)
@@ -333,6 +356,7 @@ class MusicAnalyzer(
         levelSamples += hopSize
 
         tempoTracker.push(onsetDetector.process(window, windowSize - onsetDetector.fftSize))
+        heard?.push(pending, 0, hopSize)
 
         var changed = false
         if (hopIndex % chromaEveryHops == 0L) {
@@ -340,6 +364,21 @@ class MusicAnalyzer(
             // A sounding note's third overtone lands on its fifth: leave that out too.
             chromaExtractor.ownMask = ownNow or ((ownNow shl 7) or (ownNow ushr 5)) and 0xFFF
             chromaExtractor.process(window, windowSize, hopSeconds * chromaEveryHops)
+            heard?.let { h ->
+                // The model hears the music moved onto concert pitch by the same grid the chroma uses.
+                h.tuningCents = chromaExtractor.gridOffsetCents
+                // A slow phone makes the listener later; read further behind (it never shrinks).
+                readBehindHops = maxOf(readBehindHops, behindHops(h))
+                // What was played one tick, read far enough behind that the model has heard it.
+                val tick = hopSeconds * chromaEveryHops
+                val to = (hopIndex - readBehindHops) * hopSeconds
+                heardFrame.fill(0f)
+                h.pitchClasses(to - tick, to, heardFrame)
+                val decay = kotlin.math.exp(-tick / preset.keyMemorySeconds).toFloat()
+                var sum = 0.0
+                for (i in 0 until 12) { heardAccum[i] = heardAccum[i] * decay + heardFrame[i]; sum += heardFrame[i] }
+                heardWeight = heardWeight * decay + sum
+            }
             run {
                 val decay = kotlin.math.exp(-(hopSeconds * chromaEveryHops) / recentChromaSeconds).toFloat()
                 for (i in 0 until 12) recentChroma[i] = recentChroma[i] * decay + chromaExtractor.frameChroma[i]
@@ -426,7 +465,7 @@ class MusicAnalyzer(
             // A lone voice's overtones read as chords (a sung E looks like an E major chord), so
             // with a tracked melody the chord evidence is left out: the notes speak for themselves.
             val chords = if (pitchTracker != null) emptyList() else currentSegments()
-            val evidence = RelativeKeyResolver.evidence(found, notes, chromaExtractor.accumulatedChroma, chords, heardSeconds = now, nowSeconds = now, sigma = sigma)
+            val evidence = RelativeKeyResolver.evidence(found, notes, keyChroma(), chords, heardSeconds = now, nowSeconds = now, sigma = sigma)
             pendingKey = modeTracker.update(found, evidence.total, RelativeKeyResolver.THRESHOLD * evidenceNeeded())
             pairOk = pitchTracker == null || pairIsClear(notes)
             // A scattered singer gives weaker evidence: the shown confidence says so.
@@ -462,11 +501,11 @@ class MusicAnalyzer(
                 return
             }
         }
-        val ranked = KeyDetector.rank(chromaExtractor.accumulatedChroma)
+        val ranked = KeyDetector.rank(keyChroma())
         val confidence = KeyDetector.confidence(ranked).toFloat()
         val best = ranked.first().key
         // Nothing is shown from the first moments: a single slide or breath is not a key.
-        val enoughSound = chromaExtractor.accumulatedWeight > 1e-4 && hopIndex * hopSeconds >= 1.0
+        val enoughSound = keyWeight() > 1e-4 && (hopIndex - readBehindHops) * hopSeconds >= 1.0
         if (!enoughSound || confidence < 0.15f) {
             keyCandidateHits = 0
             return
@@ -490,9 +529,11 @@ class MusicAnalyzer(
      * tracker. Decisions arrive a few observations late and are turned into timed segments.
      */
     private fun updateChords() {
-        val now = (hopIndex * hopSeconds).toFloat()
-        val frame = chromaExtractor.frameChroma
-        if (observationFrames == 0) observationStart = now - (hopSeconds * chromaEveryHops).toFloat()
+        // With heard notes, the chords are read behind the audio and dated to when they were played.
+        val chordHop = hopIndex - readBehindHops
+        val now = (chordHop * hopSeconds).toFloat()
+        val frame = if (heard != null) heardFrame else chromaExtractor.frameChroma
+        if (observationFrames == 0 || now < observationStart) observationStart = now - (hopSeconds * chromaEveryHops).toFloat()
         for (i in 0 until 12) observationChroma[i] += frame[i]
         observationFrames++
 
@@ -500,7 +541,7 @@ class MusicAnalyzer(
             // Half beats, or quarter beats when a half beat would exceed 0.35 s, so decisions
             // (made four observations late) never lag by more than about a second.
             val divisions = if (beatPeriodHops * hopSeconds / 2.0 > 0.35) 4L else 2L
-            val gridIndex = Math.floorDiv((hopIndex - beatAnchorHop).toLong() * divisions, beatPeriodHops.toLong().coerceAtLeast(1))
+            val gridIndex = Math.floorDiv((chordHop - beatAnchorHop).toLong() * divisions, beatPeriodHops.toLong().coerceAtLeast(1))
             val crossed = lastGridIndex != Long.MIN_VALUE && gridIndex != lastGridIndex
             lastGridIndex = gridIndex
             crossed
@@ -669,7 +710,7 @@ class MusicAnalyzer(
         levelSamples = 0
         val level = if (rms > 0) ((20.0 * log10(rms) + 60.0) / 60.0).coerceIn(0.0, 1.0).toFloat() else 0f
 
-        val chroma = chromaExtractor.accumulatedChroma
+        val chroma = keyChroma()
         val maxChroma = chroma.max().coerceAtLeast(1e-9f)
         val t = tempo
         val m = shownMeter
@@ -744,6 +785,8 @@ class MusicAnalyzer(
             songKeyAlternative = songKeyAlternative,
             pitchModel = when (pitchTracker) { null -> null; is CrepePitch -> "CREPE-tiny"; else -> "autocorrelation" },
             pitchMillis = pitchMillis.toFloat(),
+            notesModel = if (heard != null) "Basic Pitch" else null,
+            notesMillisPerSecond = heard?.millisPerSecond?.toFloat() ?: 0f,
         )
     }
 }
