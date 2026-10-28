@@ -97,7 +97,7 @@ class ChordKeyEvalTest {
             Triple("guitar", AnalysisPreset.GUITAR, null),
             Triple("guitar+bp", AnalysisPreset.GUITAR, { rate: Int -> HeardNotes(TestNotes.weights, rate) }),
             Triple("bp-plain", AnalysisPreset.GUITAR, { rate: Int -> HeardNotes(TestNotes.weights, rate, bassBoost = 0f, dateShift = 0.0) }),
-            Triple("bp-fixed", AnalysisPreset.GUITAR, { rate: Int -> HeardNotes(TestNotes.weights, rate, followTuning = false) }),
+            Triple("bp-follow", AnalysisPreset.GUITAR, { rate: Int -> HeardNotes(TestNotes.weights, rate, followTuning = true) }),
             Triple("band", AnalysisPreset.BAND, null),
             Triple("band+bp", AnalysisPreset.BAND, { rate: Int -> HeardNotes(TestNotes.weights, rate) }),
         )

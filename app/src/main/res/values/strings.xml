@@ -129,7 +129,7 @@
     <string name="settings_notes">Hearing the notes (Band, Guitar)</string>
     <string name="notes_standard">Standard</string>
     <string name="notes_basic_pitch">Basic Pitch</string>
-    <string name="settings_notes_help">Basic Pitch is a small neural network that hears each note being played. On 360 recorded guitar pieces it found the key more often; chords came out about the same. It shows chords a little later. Try both. Its cost shows under Details.</string>
+    <string name="settings_notes_help">Basic Pitch is a small neural network that hears each note being played. In our tests on recorded guitar and on synthesized instruments it named chords and keys right a little more often, and held up better when the music was out of tune. It shows chords about a second later. Try both. Its cost shows under Details.</string>
     <string name="settings_pitch_help">CREPE is a small neural network trained on singing. On 40 recorded singers it found the right note more often, most of all with background noise. It is new here: try both with your singers. Its cost per frame shows under Details.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do: C is always Do.</string>
     <string name="done">Done</string>

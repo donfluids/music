@@ -29,16 +29,19 @@ class HeardNotes(
     private val floor: Float = 0.2f,
     /**
      * Extra weight for the lowest note sounding below middle C, which usually names the root.
-     * On 180 GuitarSet accompaniments, 1 gave the most right chords and keys (0, 1 and 2 tried).
+     * On 180 GuitarSet accompaniments 1 gave the most right chords and keys (0, 1 and 2 tried),
+     * and on 300 IDMT progressions it cost nothing.
      */
     private val bassBoost: Float = 1f,
+    /** Seconds added to each frame's date; 0.1 was tried and helped GuitarSet less than it cost IDMT. */
+    private val dateShift: Double = 0.0,
     /**
-     * Seconds added to each frame's date. The notes are heard about a tenth of a second early
-     * (the long low-frequency kernels reach ahead); on GuitarSet the chords lined up best at 0.1.
+     * Shift the audio onto concert pitch by [tuningCents] before the model hears it. Off: fed
+     * the chroma's tuning grid, it lost on GuitarSet both in tune and 39 cents sharp (key 0.81
+     * to 0.69 there). The grid reads overtones, which run sharp on strings, and near half a
+     * semitone it can land on the wrong side; the model copes with the detuning better alone.
      */
-    private val dateShift: Double = 0.1,
-    /** Shift the audio onto concert pitch by [tuningCents] before the model hears it. */
-    private val followTuning: Boolean = true,
+    private val followTuning: Boolean = false,
     private val worker: java.util.concurrent.Executor? = null,
 ) {
     private val model = BasicPitch(weights)
@@ -48,7 +51,13 @@ class HeardNotes(
     private val ringTime = DoubleArray(BasicPitch.WINDOW)
     private var written = 0L
     private val runFrames = (runEverySeconds * BasicPitch.SAMPLE_RATE / BasicPitch.HOP).toInt().coerceIn(1, KEEP_END)
-    private var nextRun = BasicPitch.WINDOW.toLong()
+    /**
+     * The first run comes as soon as its kept frames reach back to the first sample, on a window
+     * that is silence before it (the official inference pads the start the same way). Waiting
+     * for a full window lost the first 1.3 s of every song.
+     */
+    private val firstRun = (BasicPitch.WINDOW - (KEEP_END - runFrames) * BasicPitch.HOP).toLong()
+    private var nextRun = firstRun
     private val notes = Array(runFrames) { FloatArray(BasicPitch.NOTES) }
 
     /** A window waiting for the model, with the input time of each frame it will give. */
@@ -89,7 +98,7 @@ class HeardNotes(
         ring.fill(0f)
         ringTime.fill(0.0)
         written = 0L
-        nextRun = BasicPitch.WINDOW.toLong()
+        nextRun = firstRun
         synchronized(lock) {
             generation++
             times.fill(Double.NEGATIVE_INFINITY)
