@@ -28,9 +28,11 @@ class ClipReplayTest {
             val presetId = meta.optString("preset", "band")
             val (rate, samples) = WavWriter.read(wav)
             // Voices twice: with the standard tracker and with CREPE, for comparison.
-            val runs: List<Pair<AnalysisPreset, ((Int) -> PitchEstimator)?>> = AnalysisPreset.ALL.map { it to null } + listOf(AnalysisPreset.VOICES to TestPitch.crepe)
-            for ((preset, pitch) in runs) {
-                val analyzer = MusicAnalyzer(rate, preset, pitch = pitch)
+            // Band and Guitar twice too: with the spectral chroma and with Basic Pitch.
+            val runs: List<Triple<AnalysisPreset, ((Int) -> PitchEstimator)?, Boolean>> = AnalysisPreset.ALL.map { Triple(it, null, false) } +
+                listOf(Triple(AnalysisPreset.VOICES, TestPitch.crepe, false), Triple(AnalysisPreset.BAND, null, true), Triple(AnalysisPreset.GUITAR, null, true))
+            for ((preset, pitch, bp) in runs) {
+                val analyzer = MusicAnalyzer(rate, preset, pitch = pitch, notes = if (bp) { r: Int -> HeardNotes(TestNotes.weights, r) } else null)
                 val chunk = 1024
                 var i = 0
                 while (i < samples.size) {
@@ -41,7 +43,7 @@ class ClipReplayTest {
                 val r = analyzer.result
                 val mark = if (preset.id == presetId) "*" else " "
                 println(
-                    "${wav.nameWithoutExtension} |$mark${preset.id}${if (pitch != null) "+crepe" else ""} | " +
+                    "${wav.nameWithoutExtension} |$mark${preset.id}${if (pitch != null) "+crepe" else ""}${if (bp) "+basicpitch" else ""} | " +
                         "${labels.optString("key", "?")} / ${labels.optString("tempo", "?")} / ${labels.optString("meter", "?")} | " +
                         "${r.key?.label ?: "-"} (${"%.2f".format(r.keyConfidence)}) / " +
                         "${r.bpm?.let { "%.0f".format(it) } ?: "-"} / ${r.meterLabel ?: "-"} (${"%.2f".format(r.meterConfidence)}) | " +

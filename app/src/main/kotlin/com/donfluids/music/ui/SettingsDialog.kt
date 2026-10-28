@@ -37,10 +37,12 @@ fun SettingsDialog(
     naming: NoteNaming,
     nashville: Boolean,
     crepe: Boolean,
+    basicPitch: Boolean,
     onReference: (Int) -> Unit,
     onNaming: (NoteNaming) -> Unit,
     onNashville: (Boolean) -> Unit,
     onCrepe: (Boolean) -> Unit,
+    onBasicPitch: (Boolean) -> Unit,
     onDone: () -> Unit,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -81,6 +83,15 @@ fun SettingsDialog(
                     onSelect = onNashville,
                 )
                 Text(stringResource(R.string.settings_chords_help), style = MaterialTheme.typography.bodySmall, color = muted)
+
+                Text(stringResource(R.string.settings_notes), style = MaterialTheme.typography.labelLarge)
+                TwoWay(
+                    first = stringResource(R.string.notes_standard),
+                    second = stringResource(R.string.notes_basic_pitch),
+                    secondSelected = basicPitch,
+                    onSelect = onBasicPitch,
+                )
+                Text(stringResource(R.string.settings_notes_help), style = MaterialTheme.typography.bodySmall, color = muted)
 
                 Text(stringResource(R.string.settings_pitch), style = MaterialTheme.typography.labelLarge)
                 TwoWay(

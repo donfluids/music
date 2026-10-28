@@ -304,10 +304,12 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel, dark: Boolean) {
             naming = state.naming,
             nashville = state.nashville,
             crepe = state.crepe,
+            basicPitch = state.basicPitch,
             onReference = viewModel::setReferenceHz,
             onNaming = viewModel::setNaming,
             onNashville = viewModel::setNashville,
             onCrepe = viewModel::setCrepe,
+            onBasicPitch = viewModel::setBasicPitch,
             onDone = { viewModel.showSettings(false) },
         )
     }
@@ -1166,6 +1168,11 @@ private fun Details(a: AnalysisResult, sh: Shown, showMeter: Boolean = true) {
                 a.pitchModel?.let { model ->
                     DetailRow(stringResource(R.string.pitch_tracker)) {
                         Text(stringResource(R.string.pitch_tracker_value, model, a.pitchMillis), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                a.notesModel?.let { model ->
+                    DetailRow(stringResource(R.string.note_listener)) {
+                        Text(stringResource(R.string.note_listener_value, model, a.notesMillisPerSecond), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
                 if (showMeter && a.meterScores.isNotEmpty()) {

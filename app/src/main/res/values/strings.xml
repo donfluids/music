@@ -83,6 +83,8 @@
     <string name="notes_heard">Notes heard</string>
     <string name="pitch_tracker">Pitch tracker</string>
     <string name="pitch_tracker_value">%1$s · %2$.1f ms per frame (46 ms available)</string>
+    <string name="note_listener">Note listener</string>
+    <string name="note_listener_value">%1$s · %2$.0f ms per second of audio</string>
     <string name="bar_length">Bar length</string>
     <string name="beats_n">%1$d beats</string>
     <string name="record_clip">Record clip for tuning</string>
@@ -124,6 +126,10 @@
     <string name="settings_pitch">Following the melody (Voices)</string>
     <string name="pitch_standard">Standard</string>
     <string name="pitch_crepe">CREPE</string>
+    <string name="settings_notes">Hearing the notes (Band, Guitar)</string>
+    <string name="notes_standard">Standard</string>
+    <string name="notes_basic_pitch">Basic Pitch</string>
+    <string name="settings_notes_help">Basic Pitch is a small neural network that hears each note being played. In our tests on recorded guitar and on synthesized instruments it named chords and keys right a little more often, and held up better when the music was out of tune. It shows chords about a second later. Try both. Its cost shows under Details.</string>
     <string name="settings_pitch_help">CREPE is a small neural network trained on singing. On 40 recorded singers it found the right note more often, most of all with background noise. It is new here: try both with your singers. Its cost per frame shows under Details.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do: C is always Do.</string>
     <string name="done">Done</string>
@@ -169,5 +175,7 @@
     <string name="limits_note_tuning">If your band tunes to something other than A = 440, set it in Settings so “in tune” means what you expect.</string>
     <string name="limits_note_new">KeyCatch is new, and we haven\'t tried it in every kind of room or with every kind of band yet.</string>
     <string name="limits_closing">Think of KeyCatch as a second pair of ears, not the final word. When it matters, trust your own ears too. If something looks off, New song gives it a fresh start.</string>
+    <string name="limits_thanks_heading">Thanks</string>
+    <string name="limits_thanks">KeyCatch can hear notes with two open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT licence), and Basic Pitch, by Spotify\'s Audio Intelligence Lab (Apache 2.0). Text is set in Manrope (SIL Open Font Licence) and the icons are Google\'s Material Symbols (Apache 2.0). Their licences ship with the app.</string>
     <string name="limits_privacy">Everything happens on your phone. No audio leaves it unless you choose to share a recorded clip yourself.</string>
 </resources>

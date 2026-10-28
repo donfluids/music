@@ -12,7 +12,9 @@ import com.donfluids.music.audio.ClipRecorder
 import com.donfluids.music.audio.ClipStore
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
+import com.donfluids.music.dsp.BasicPitch
 import com.donfluids.music.dsp.CrepePitch
+import com.donfluids.music.dsp.HeardNotes
 import com.donfluids.music.dsp.MusicAnalyzer
 import com.donfluids.music.history.SongHistory
 import com.donfluids.music.history.SongRecord
@@ -65,6 +67,8 @@ data class UiState(
     val naming: NoteNaming = NoteNaming.LETTERS,
     /** Follow the sung melody with CREPE instead of the autocorrelation tracker (experimental). */
     val crepe: Boolean = false,
+    /** Hear the notes for chords and key with Basic Pitch instead of the spectral chroma (experimental). */
+    val basicPitch: Boolean = false,
     /** Songs heard, newest first, saved on the phone. */
     val history: List<SongRecord> = emptyList(),
     val showHistory: Boolean = false,
@@ -96,6 +100,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             referenceHz = prefs.getInt(PREF_REFERENCE, 440).coerceIn(MIN_REFERENCE_HZ, MAX_REFERENCE_HZ),
             naming = NoteNaming.byId(prefs.getString(PREF_NAMING, null)),
             crepe = prefs.getBoolean(PREF_CREPE, false),
+            basicPitch = prefs.getBoolean(PREF_BASIC_PITCH, false),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -202,9 +207,24 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         runCatching { getApplication<Application>().assets.open(CREPE_ASSET).use { CrepePitch.Weights.read(it.readBytes()) } }.getOrNull()
     }
 
+    /** Basic Pitch runs here, off the audio thread, so a slow phone cannot make the microphone drop audio. */
+    private val notesWorker: java.util.concurrent.ExecutorService by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "KeyCatch-notes").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+    }
+
+    /** Basic Pitch's weights, read once; without them the spectral chroma is used. */
+    private val basicPitchWeights: BasicPitch.Weights? by lazy {
+        runCatching { getApplication<Application>().assets.open(BASIC_PITCH_ASSET).use { BasicPitch.Weights.read(it.readBytes()) } }.getOrNull()
+    }
+
     private fun newAnalyzer(rate: Int, preset: AnalysisPreset): MusicAnalyzer {
         val weights = if (preset.melodicKey && _state.value.crepe) crepeWeights else null
-        return MusicAnalyzer(rate, preset, pitch = weights?.let { w -> { r: Int -> CrepePitch(w, r) } })
+        val notes = if (!preset.melodicKey && _state.value.basicPitch) basicPitchWeights else null
+        return MusicAnalyzer(
+            rate, preset,
+            pitch = weights?.let { w -> { r: Int -> CrepePitch(w, r) } },
+            notes = notes?.let { w -> { r: Int -> HeardNotes(w, r, worker = notesWorker) } },
+        )
     }
 
     /** For screenshot tests only: shows a prepared state. */
@@ -274,6 +294,19 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(crepe = enabled) }
         val preset = _state.value.preset
         if (preset.melodicKey) {
+            session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, preset) }
+            recorder.get()?.analysisStartSeconds = 0f
+            _state.update { it.copy(analysis = AnalysisResult(), heldKey = null) }
+        }
+    }
+
+    /** Switch how notes are heard for chords and key. While listening in Band or Guitar, analysis starts over. */
+    fun setBasicPitch(enabled: Boolean) {
+        if (enabled == _state.value.basicPitch) return
+        prefs.edit().putBoolean(PREF_BASIC_PITCH, enabled).apply()
+        _state.update { it.copy(basicPitch = enabled) }
+        val preset = _state.value.preset
+        if (!preset.melodicKey) {
             session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, preset) }
             recorder.get()?.analysisStartSeconds = 0f
             _state.update { it.copy(analysis = AnalysisResult(), heldKey = null) }
@@ -428,5 +461,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         const val CREPE_ASSET = "crepe-tiny.bin"
         const val PREF_NAMING = "naming"
         const val PREF_CREPE = "crepe"
+        const val BASIC_PITCH_ASSET = "basic-pitch.bin"
+        const val PREF_BASIC_PITCH = "basicPitch"
     }
 }
