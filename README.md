@@ -32,7 +32,10 @@ The mathematics behind every stage, with equations and the constants the code us
    the tempo with beat dots and the time signature. A thin line under each value grows as the
    app becomes sure and turns teal once the value has settled. The key usually settles within
    two or three seconds, the tempo within about four, and the time signature needs two to four
-   bars. The chord is confirmed with a little look-ahead, so it lands about a second late (one to two beats).
+   bars. The chord is confirmed with a little look-ahead, so it lands about a second late (one to two beats),
+   and about a second more with Basic Pitch, the default note listener for Band and Guitar.
+   Melodies (Voices) are followed with CREPE by default. Settings switches either back to the
+   standard method, which asks less of the phone.
 3. **Hold** freezes the key so nothing changes under your hands; the chord and beat keep
    running. Tap again to release.
 4. **Transpose** shifts every displayed key and chord to what you should play, for example

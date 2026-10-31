@@ -129,8 +129,8 @@
     <string name="settings_notes">Hearing the notes (Band, Guitar)</string>
     <string name="notes_standard">Standard</string>
     <string name="notes_basic_pitch">Basic Pitch</string>
-    <string name="settings_notes_help">Basic Pitch is a small neural network that hears each note being played. In our tests on recorded guitar and on synthesized instruments it named chords and keys right a little more often, and held up better when the music was out of tune. It shows chords about a second later. Try both. Its cost shows under Details.</string>
-    <string name="settings_pitch_help">CREPE is a small neural network trained on singing. On 40 recorded singers it found the right note more often, most of all with background noise. It is new here: try both with your singers. Its cost per frame shows under Details.</string>
+    <string name="settings_notes_help">Basic Pitch is a small neural network that hears each note being played. In our tests on recorded guitar and on synthesized instruments it named chords and keys right a little more often, and held up better when the music was out of tune. Standard shows chords about a second sooner and asks less of the phone; switch to it if the app struggles. Basic Pitch\'s cost shows under Details.</string>
+    <string name="settings_pitch_help">CREPE is a small neural network trained on singing. On 40 recorded singers it found the right note more often, most of all with background noise. Standard asks less of the phone; switch to it if the app struggles. CREPE\'s cost per frame shows under Details.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do: C is always Do.</string>
     <string name="done">Done</string>
     <string name="back">Back</string>
@@ -170,7 +170,7 @@
     <string name="limits_voices_lead">Only voices are singing.</string>
     <string name="limits_voices">Singing rarely gives a steady beat, so in Voices mode you tap the tempo in yourself.</string>
     <string name="limits_notes_heading">A few more honest notes</string>
-    <string name="limits_note_late">Chords show up about a second late, because KeyCatch listens a little ahead to be sure.</string>
+    <string name="limits_note_late">Chords show up a second or two late, because KeyCatch listens a little ahead to be sure.</string>
     <string name="limits_note_simple">Rich chords are shown as the nearest simple one. A Cmaj9 might show as Cmaj7 or C.</string>
     <string name="limits_note_tuning">If your band tunes to something other than A = 440, set it in Settings so “in tune” means what you expect.</string>
     <string name="limits_note_new">KeyCatch is new, and we haven\'t tried it in every kind of room or with every kind of band yet.</string>
