@@ -65,10 +65,10 @@ data class UiState(
     /** The A the band tunes to, in Hz; "in tune" is measured from it. */
     val referenceHz: Int = 440,
     val naming: NoteNaming = NoteNaming.LETTERS,
-    /** Follow the sung melody with CREPE instead of the autocorrelation tracker (experimental). */
-    val crepe: Boolean = false,
-    /** Hear the notes for chords and key with Basic Pitch instead of the spectral chroma (experimental). */
-    val basicPitch: Boolean = false,
+    /** Follow the sung melody with CREPE (the default) or the autocorrelation tracker. */
+    val crepe: Boolean = true,
+    /** Hear the notes for chords and key with Basic Pitch (the default) or the spectral chroma. */
+    val basicPitch: Boolean = true,
     /** Songs heard, newest first, saved on the phone. */
     val history: List<SongRecord> = emptyList(),
     val showHistory: Boolean = false,
@@ -99,8 +99,9 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             nashville = prefs.getBoolean(PREF_NASHVILLE, false),
             referenceHz = prefs.getInt(PREF_REFERENCE, 440).coerceIn(MIN_REFERENCE_HZ, MAX_REFERENCE_HZ),
             naming = NoteNaming.byId(prefs.getString(PREF_NAMING, null)),
-            crepe = prefs.getBoolean(PREF_CREPE, false),
-            basicPitch = prefs.getBoolean(PREF_BASIC_PITCH, false),
+            // The learned models are the default; a choice made in Settings is kept.
+            crepe = prefs.getBoolean(PREF_CREPE, true),
+            basicPitch = prefs.getBoolean(PREF_BASIC_PITCH, true),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
