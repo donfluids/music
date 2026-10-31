@@ -29,35 +29,36 @@ The mathematics behind every stage, with equations and the constants the code us
 
 1. Tap **Listen** and grant the microphone permission.
 2. The top row shows the key to play in and the chord sounding now; the row under it shows
-   the tempo with beat dots and the time signature. A thin line under each value grows as the
-   app becomes sure and turns teal once the value has settled. The key usually settles within
+   the tempo with beat dots and the time signature. When the app is not sure yet, the line
+   under the key says so ("a guess"); otherwise it just names the mode. The key usually settles within
    two or three seconds, the tempo within about four, and the time signature needs two to four
    bars. The chord is confirmed with a little look-ahead, so it lands about a second late (one to two beats),
    and about a second more with Basic Pitch, the default note listener for Band and Guitar.
-   Melodies (Voices) are followed with CREPE by default. Settings switches either back to the
-   standard method, which asks less of the phone.
+   Melodies (Voices) are followed with CREPE by default. In Settings these are the "Accurate"
+   choices; "Standard" switches back to the older method, which asks less of the phone.
 3. **Hold** freezes the key so nothing changes under your hands; the chord and beat keep
    running. Tap again to release.
-4. **Transpose** shifts every displayed key and chord to what you should play, for example
+4. **Transpose**, beside the chords of the key, shifts every displayed key and chord to what you should play, for example
    when the singers are in Db and you would rather play in C with the keyboard transposed
    up one. **Numbers** shows Nashville numbers (1, 4, 5, 6m) instead of letters.
 5. Tap the BPM to hear the tempo as double or half when the tracker has picked the wrong
    pulse.
-6. Under the values: a caution when the notes and the chords disagree or the singers are
+6. Under the values: a note when the notes and the chords disagree or the singers are
    between two keys, the seven chords of the key with the one sounding now highlighted, and
-   the chord sequence heard so far.
-7. **Details** at the bottom opens the diagnostics: tuning in cents, the note-based and
-   chord-based keys with their runners-up, the notes heard, and the bar-length candidates.
+   the recent chords.
+7. **Details** at the bottom shows the tuning, why the app chose the key, the notes heard,
+   and whether the phone is keeping up with the learned models. A long press on Details also
+   shows their raw cost as a share of real time, for testing on a new phone.
 8. Tap **New song** when the next song starts so the previous one stops influencing the
    result. **Stop** keeps the last result on screen until you listen again.
 
-The ☾ / ☀ button in the top bar switches between light and dark; the choice is remembered.
+Settings has the theme: follow the system, or always light or dark.
 The screen stays on while listening, and the microphone is released whenever the app leaves
 the foreground.
 
 ### Presets
 
-Pick the preset from the dropdown in the top bar to match what the phone is hearing. The pipeline is the same; the
+Pick the preset on the start screen, or later from the dropdown in the top bar, to match what the phone is hearing. The pipeline is the same; the
 presets change which frequencies count and how patient the estimates are.
 
 | Preset | Use when | What changes |

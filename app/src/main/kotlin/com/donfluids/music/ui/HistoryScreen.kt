@@ -184,13 +184,13 @@ private fun dayLabel(context: Context, day: LocalDate, today: LocalDate): String
     else -> day.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL))
 }
 
-/** "10:42 · 96 bpm, tapped · 4/4 · 3:20" */
+/** "10:42 AM, 96 BPM, 4/4, 3 min" */
 private fun details(context: Context, song: SongRecord, time: String): String = buildList {
     add(time)
     song.bpm?.let { add(context.getString(if (song.bpmTapped) R.string.history_bpm_tapped else R.string.history_bpm, it)) }
     song.meter?.let { add(it) }
-    add(String.format(Locale.ROOT, "%d:%02d", song.seconds / 60, song.seconds % 60))
-}.joinToString(" · ")
+    add(if (song.seconds >= 60) context.getString(R.string.history_minutes, (song.seconds + 30) / 60) else context.getString(R.string.history_seconds, song.seconds))
+}.joinToString(", ")
 
 /** "played in A major (+2)" when the player had transposed, else null. */
 private fun playedIn(context: Context, song: SongRecord, naming: NoteNaming): String? =
@@ -204,8 +204,8 @@ internal fun historyText(context: Context, songs: List<SongRecord>, naming: Note
         songs.groupBy { Instant.ofEpochMilli(it.atMillis).atZone(zone).toLocalDate() }.forEach { (day, daySongs) ->
             append("\n\n").append(dayLabel(context, day, today))
             daySongs.forEach { song ->
-                append("\n").append(naming.label(song.key)).append(" · ").append(details(context, song, timeOf(song, zone)))
-                playedIn(context, song, naming)?.let { append(" · ").append(it) }
+                append("\n").append(naming.label(song.key)).append(", ").append(details(context, song, timeOf(song, zone)))
+                playedIn(context, song, naming)?.let { append(". ").append(it) }
             }
         }
     }
