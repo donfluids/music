@@ -48,7 +48,7 @@ class ScreenshotTest {
         // The beat dots and the tap pulse animate for ever: step the clock by hand instead of
         // waiting for an idle moment that never comes.
         compose.mainClock.autoAdvance = false
-        compose.setContent { LiveKeyTheme(dark = dark) { AnalyzerScreen(vm, dark = dark) } }
+        compose.setContent { LiveKeyTheme(dark = dark) { AnalyzerScreen(vm) } }
         compose.mainClock.advanceTimeBy(400)
         // A dialog is a window of its own, so the whole screen is captured when one is open.
         if (state.showSettings) captureScreenRoboImage("build/screenshots/$name.png")

@@ -361,8 +361,9 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(tempoMultiplier = multiplier) }
     }
 
-    fun setDarkTheme(dark: Boolean) {
-        prefs.edit().putBoolean(PREF_DARK, dark).apply()
+    /** Dark, light, or null to follow the system. */
+    fun setTheme(dark: Boolean?) {
+        if (dark == null) prefs.edit().remove(PREF_DARK).apply() else prefs.edit().putBoolean(PREF_DARK, dark).apply()
         _state.update { it.copy(darkTheme = dark) }
     }
 

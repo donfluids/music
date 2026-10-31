@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             LiveKeyTheme(dark = dark) {
-                AnalyzerScreen(viewModel, dark = dark)
+                AnalyzerScreen(viewModel)
             }
         }
     }
