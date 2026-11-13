@@ -33,6 +33,14 @@ class Wrapper(torch.nn.Module):
         return out["beat"], out["downbeat"]
 
 
+def peaks(logits):
+    """Frames picked by the official minimal postprocessing (max within +-3 frames, logit > 0)."""
+    import torch.nn.functional as F
+    x = logits[None, None]
+    keep = (x == F.max_pool1d(x, 7, 1, 3)) & (x > 0)
+    return torch.nonzero(keep[0, 0]).flatten().tolist()
+
+
 def dir_size(path):
     return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs)
 
@@ -76,27 +84,36 @@ def main():
         traced = torch.jit.trace(export, example)
 
     if a.audio:
+        import copy
+
         xs = real_inputs(a.audio, a.frames)
+        half = copy.deepcopy(export).half()
+        d_trace = d_export = d_half = ref_max = 0.0
+        flips = total = 0
+        beats32 = beats16 = beats_same = 0
         with torch.no_grad():
-            d_trace = 0.0
-            d_half = 0.0
-            ref_max = 0.0
-            half = Wrapper(load_model(a.beat_this_src, a.ckpt)).eval().half()
-            flips = 0
-            total = 0
             for x in xs:
                 x = x[None]
                 rb, rd = wrapped(x)
+                eb, ed = export(x)
                 tb, td = traced(x)
                 hb, hd = half(x.half())
+                hb, hd = hb.float(), hd.float()
+                d_export = max(d_export, (rb - eb).abs().max().item(), (rd - ed).abs().max().item())
                 d_trace = max(d_trace, (rb - tb).abs().max().item(), (rd - td).abs().max().item())
-                d_half = max(d_half, (rb - hb.float()).abs().max().item(), (rd - hd.float()).abs().max().item())
+                d_half = max(d_half, (rb - hb).abs().max().item(), (rd - hd).abs().max().item())
                 ref_max = max(ref_max, rb.abs().max().item())
-                flips += int(((rb > 0) != (hb.float() > 0)).sum() + ((rd > 0) != (hd.float() > 0)).sum())
+                flips += int(((rb > 0) != (hb > 0)).sum() + ((rd > 0) != (hd > 0)).sum())
                 total += 2 * rb.numel()
+                b32 = set(peaks(rb[0]))
+                b16 = set(peaks(hb[0]))
+                beats32 += len(b32)
+                beats16 += len(b16)
+                beats_same += len(b32 & b16)
         print(f"{name}: {len(xs)} real windows of {a.frames} frames; max |logit| {ref_max:.2f}")
-        print(f"{name}: traced export vs official eager fp32 max diff {d_trace:.3g}")
-        print(f"{name}: torch float16 (proxy for Core ML FP16) vs fp32 max diff {d_half:.3g}; frames whose logit sign flips: {flips}/{total}")
+        print(f"{name}: export module vs official eager fp32 max diff {d_export:.3g}; traced export vs official {d_trace:.3g}")
+        print(f"{name}: export module in torch float16 (stand-in for Core ML FP16) vs official fp32: max diff {d_half:.3g}; "
+              f"frames whose logit sign flips: {flips}/{total}; beat peaks fp32 {beats32}, fp16 {beats16}, identical frame {beats_same}")
 
     os.makedirs(a.out, exist_ok=True)
     for prec, cp in (("fp32", ct.precision.FLOAT32), ("fp16", ct.precision.FLOAT16)):

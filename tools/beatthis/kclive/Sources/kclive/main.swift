@@ -27,6 +27,8 @@ for line in list.split(separator: "\n") {
     var nextMoment = 4.0
     var buf = [Float](repeating: 0, count: chunk)
     var fed = 0
+    // Every beat the screen would pulse on: (time, bar position), recorded when lastBeatAtNanos moves.
+    var shownBeats: [(Double, Int)] = []
     let started = DispatchTime.now().uptimeNanoseconds
     while fed + chunk <= n {
         for k in 0..<chunk { buf[k] = audio[fed + k] }
@@ -34,6 +36,13 @@ for line in list.split(separator: "\n") {
         let now = baseNanos + Int(Double(fed) / Double(rate) * 1e9)
         analyzer.process(buf, count: chunk, nowNanos: now)
         let t = Double(fed) / Double(rate)
+        let lb = analyzer.result.lastBeatAtNanos
+        if lb != 0 {
+            let bt = Double(lb - baseNanos) / 1e9
+            if shownBeats.isEmpty || abs(bt - shownBeats[shownBeats.count - 1].0) > 0.001 {
+                shownBeats.append((bt, analyzer.result.beatsPerBar > 0 ? analyzer.result.lastBeatIndexInBar : -1))
+            }
+        }
         if t >= nextMoment {
             let r = analyzer.result
             let last = r.lastBeatAtNanos == 0 ? -1.0 : Double(r.lastBeatAtNanos - baseNanos) / 1e9
@@ -47,6 +56,8 @@ for line in list.split(separator: "\n") {
         }
     }
     let ms = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
+    let beatList = shownBeats.map { String(format: "[%.6f,%d]", $0.0, $0.1) }.joined(separator: ",")
+    out += "{\"shownBeats\":[\(beatList)]}\n"
     out += "{\"done\":true,\"seconds\":\(Double(n) / Double(rate)),\"cpuMs\":\(String(format: "%.1f", ms))}\n"
     try! out.write(toFile: parts[1], atomically: true, encoding: .utf8)
 }

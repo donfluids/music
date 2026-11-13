@@ -27,9 +27,15 @@ def rotate_half(x, shp):
 
 
 def rms_norm(norm, x):
-    # F.normalize(x, dim=-1) * sqrt(size) * gamma, F.normalize eps = 1e-12
-    n = torch.sqrt((x * x).sum(dim=-1, keepdim=True)).clamp(min=1e-12)
-    return x / n * norm.scale * norm.gamma
+    """F.normalize(x, dim=-1) * sqrt(size) * gamma (F.normalize eps = 1e-12).
+
+    The vector is divided by its largest magnitude before squaring: in final0 the sum of
+    squares reaches ~6.6e5 at some norms, past float16's 65504, so a plain sum overflows in a
+    float16 Core ML model. Scaled first, the sum stays <= size. Same result in float32."""
+    m = x.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
+    y = x / m
+    n = torch.sqrt((y * y).sum(dim=-1, keepdim=True))
+    return y / n * norm.scale * norm.gamma
 
 
 def attention(att, x, cos, sin, b, n):
