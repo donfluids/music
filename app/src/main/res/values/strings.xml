@@ -103,10 +103,10 @@
     <string name="settings_pitch">Voices mode</string>
     <string name="pitch_standard">Standard</string>
     <string name="pitch_crepe">Accurate</string>
-    <string name="settings_notes">Band and Guitar modes</string>
+    <string name="settings_notes">Chords and key</string>
     <string name="notes_standard">Standard</string>
     <string name="notes_basic_pitch">Accurate</string>
-    <string name="settings_notes_help">Accurate hears each note with a small learned model, Basic Pitch. It gets chords and keys right a little more often, even when the band is out of tune. Chords show about a second later, and the phone works harder. If Details says the phone is falling behind, choose Standard.</string>
+    <string name="settings_notes_help">In Band and Guitar modes, Accurate hears each note with a small learned model, Basic Pitch. It gets chords and keys right a little more often, even when the band is out of tune. Chords show about a second later, and the phone works harder. If Details says the phone is falling behind, choose Standard.</string>
     <string name="settings_pitch_help">Accurate follows the singers with a learned model, CREPE. It finds the right note more often, most of all in a noisy room, and the phone works harder. If Details says the phone is falling behind, choose Standard.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do, so C is always Do.</string>
     <string name="done">Done</string>
