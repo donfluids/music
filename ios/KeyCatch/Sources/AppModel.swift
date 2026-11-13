@@ -94,9 +94,12 @@ final class AppModel {
         basicPitch = prefs.object(forKey: Pref.basicPitch) as? Bool ?? true
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         songHistory = SongHistory(url: support.appendingPathComponent("history.json"))
-        historyQueue.async { [songHistory] in
-            let songs = songHistory.all()
-            DispatchQueue.main.async { self.history = songs }
+        // In screenshot mode the screens show prepared songs instead of the saved list.
+        if !Screenshots.active {
+            historyQueue.async { [songHistory] in
+                let songs = songHistory.all()
+                DispatchQueue.main.async { self.history = songs }
+            }
         }
         let clips = self.clips
         DispatchQueue.global(qos: .utility).async {

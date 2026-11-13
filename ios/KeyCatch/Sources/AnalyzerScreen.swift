@@ -737,7 +737,7 @@ private struct DetailsFold: View {
     @Environment(AppModel.self) private var model
     @Environment(\.palette) private var p
     let sh: Shown
-    @State private var open = false
+    @State private var open = Screenshots.detailsOpen
     /// A long press on the heading adds the raw timings, for testing on a new phone.
     @State private var timings = false
 

@@ -13,6 +13,7 @@ struct KeyCatchApp: App {
                 .modifier(PaletteProvider())
                 // The microphone is released whenever the app leaves the foreground, as on Android.
                 .onChange(of: scenePhase) { _, phase in if phase == .background { model.stop() } }
+                .task { Screenshots.apply(to: model) }
         }
     }
 }
