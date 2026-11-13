@@ -130,9 +130,14 @@ def prepare(a):
         for line in open(a.guitarset_split):
             k, v = line.rstrip("\n").split("\t")
             split[k.replace("_comp_mix", "")] = v
+        solo_seen = 0
         for jf in sorted(glob.glob(os.path.join(a.guitarset_ann, "*.jams"))):
             stem = os.path.basename(jf)[:-5]  # e.g. 00_BN1-129-Eb_comp
             kind = "solo" if stem.endswith("_solo") else "comp"
+            if kind == "solo":
+                solo_seen += 1
+                if (solo_seen - 1) % a.guitarset_solo_every:
+                    continue
             base = stem[: -len("_" + kind)]
             if kind == "comp" and split.get(base) != "val":
                 continue  # comp tracks of the train part were seen by every checkpoint
@@ -353,7 +358,9 @@ def _bt_one(job):
                                      d=[round(float(v) + s0 / FPS, 4) for v in d], dp=[round(v, 3) for v in dp]))
                 res[f"live_{w:g}"] = live
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        json.dump(res, open(out_path, "w"))
+        tmp = out_path + ".tmp"
+        json.dump(res, open(tmp, "w"))
+        os.replace(tmp, out_path)  # atomic: a killed run never leaves a half-written result
         out_all[name] = True
     return it["id"]
 
@@ -624,6 +631,7 @@ def main():
     p.add_argument("--guitarset-audio")
     p.add_argument("--guitarset-ann")
     p.add_argument("--guitarset-split")
+    p.add_argument("--guitarset-solo-every", type=int, default=3, help="take every n-th solo take (3 -> 60 of 180)")
     p = sub.add_parser("swift")
     p.add_argument("--kclive", required=True)
     p.add_argument("--rate", type=int, default=44100)
