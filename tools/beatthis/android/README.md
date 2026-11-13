@@ -1,6 +1,7 @@
-# Beat This! on Android: plain Kotlin vs LiteRT (measurement only)
+# Beat This! on Android: plain Kotlin vs LiteRT
 
-Nothing here is integrated into the app; the repo's working tree was not touched (the app's
+Sections 1-7 are the measurements the choice was made from; section 8 is what the app ships and
+how that file was checked. For sections 1-7 the repo's working tree was not touched (the app's
 `BasicPitch.kt`, `CrepePitch.kt`, `Fft.kt` and `tools/beatthis/*.py` are only read / compiled
 from their paths). Inputs: one window of 412 frames x 128 log-mel bands (8 s + 6 zero border
 frames each side), as the app would run once a second. small0 = Band, final0 = Guitar.
@@ -225,6 +226,80 @@ exact and dependency-free, but 3.5x slower than XNNPACK on the same core here (4
 and the gap is likely larger on ARM. It is acceptable only for small0, only on big cores, and
 only if ART's code proves as good as C2's. INT8 is not worth its accuracy loss.
 
+## 8. In the app
+
+What ships: `app/src/main/assets/beat-this-small.tflite` (4,559,576 bytes, SHA-256
+`28a89c6e9660fcf5f0cfd1f48035c73eaff4848d3955d7d86362024b82f40c9a`), small0 for Band and Guitar
+alike, stored uncompressed in the APK and memory-mapped. Made in three steps: the GPU-friendly
+graph of `scripts/bt_export_gpu.py` converted by `scripts/convert_tflite.py --gpu-friendly` with
+FP16 weights (float casting), then `scripts/fp16_biases.py`, which stores the 42 biases as FP16
+too (below). The Kotlin side is `app/.../dsp/BeatThis.kt` (the port of `BeatThis.swift`, tested
+against the iPhone's fixtures) and `app/.../LiteRtBeatThis.kt`.
+
+**Runtime.** `com.google.ai.edge.litert:litert` **1.4.2**, the plain `org.tensorflow.lite.Interpreter`,
+one thread, XNNPACK, FP32 arithmetic (`setAllowFp16PrecisionForFp32` off; no GPU delegate). Its
+only dependency is `litert-api` 1.4.2, which has none. The 2.x line (2.3.2) has the same
+Interpreter, but its `litert-api` pulls in Guava 33.5.0-android, kotlinx-coroutines-guava,
+androidx lifecycle-runtime 2.10.0 and `com.google.android.play:ai-delivery` 0.1.1-alpha01. The
+1.4.2 native libraries are 16 KB page-aligned (LOAD segments aligned 0x4000). Its JNI library
+per ABI: arm64-v8a 4.48 MB, armeabi-v7a 2.64 MB, x86 6.59 MB, x86_64 6.27 MB.
+
+**Why the biases are FP16 too (M).** LiteRT 1.4's XNNPACK delegate declines a FULLY_CONNECTED,
+CONV_2D or DEPTHWISE_CONV_2D whose weights come from an FP16 DEQUANTIZE but whose bias is a plain
+FP32 constant, which is how ai-edge-quantizer leaves them. In this graph that is 38 of 86
+FULLY_CONNECTED (all those with a bias) and the 4 convolutions, so the graph ran in 43 pieces.
+LiteRT 2.3 takes the same file in one piece. Python LiteRT 1.4.0 (the nearest release to the
+1.4.2 AAR on PyPI) vs 2.3.0, one 412-frame window, median of 21 runs, this machine:
+
+| file | LiteRT 1.4.0, 1 thread | 2 threads | LiteRT 2.3.0, 1 thread | 2 threads | XNNPACK pieces (1.4.0) |
+|---|---|---|---|---|---|
+| FP16 weights, FP32 biases (`convert_tflite.py` output) | 288 ms | 226 ms | 115 ms | 61 ms | 43 |
+| FP32 weights | 118 ms | | | | 1 |
+| FP16 weights and biases (shipped) | 130 ms | 63 ms | 116 ms | 56 ms | 1 |
+
+**Check of the shipped file against PyTorch (M).** `scripts/run_tflite.py logits` on the 11
+windows of section 2 and the two network inputs of the iPhone's fixture
+(`ios/KeyCatchCore/Tests/KeyCatchCoreTests/Resources/beat-this-coreml*`, with the official FP32
+small0's logits), then `scripts/compare.py` against the official PyTorch FP32 model (picks on the
+400 inner frames):
+
+| window | max logit diff (LiteRT 1.4.0 / 2.3.0) | sign changes | beats, downbeats ref -> LiteRT |
+|---|---|---|---|
+| GTZAN rock.00000 | 0.0239 / 0.0239 | 0 / 824 | 15 -> 15, 4 -> 4, same |
+| GTZAN blues.00010 | 0.0576 / 0.0577 | 0 / 824 | 21 -> 21, 9 -> 9, same |
+| GTZAN classical.00010 | 0.0224 / 0.0224 | 0 / 824 | 14 -> 14, 10 -> 10, same |
+| GTZAN country.00010 | 0.0170 / 0.0170 | 0 / 824 | 14 -> 14, 5 -> 5, same |
+| GTZAN disco.00010 | 0.0249 / 0.0249 | 0 / 824 | 14 -> 14, 3 -> 3, same |
+| GTZAN hiphop.00010 | 0.0065 / 0.0065 | 0 / 824 | 12 -> 12, 3 -> 3, same |
+| GTZAN jazz.00010 | 0.0053 / 0.0053 | 0 / 824 | 14 -> 14, 5 -> 5, same |
+| GTZAN metal.00010 | 0.0120 / 0.0120 | 0 / 824 | 33 -> 33, 7 -> 7, same |
+| GTZAN pop.00010 | 0.0131 / 0.0131 | 0 / 824 | 14 -> 14, 3 -> 3, same |
+| GTZAN reggae.00010 | 0.0063 / 0.0063 | 0 / 824 | 11 -> 11, 3 -> 3, same |
+| GuitarSet solo mic 00_BN1-129-Eb | 0.0062 / 0.0062 | 0 / 824 | 9 -> 9, 5 -> 5, same |
+| fixture: GuitarSet comp take at 12 s | 0.0115 / 0.0115 | 0 / 824 | 11 -> 11, 3 -> 3, same |
+| fixture: synthetic band at 10 s | 0.0124 / 0.0123 | 0 / 824 | 13 -> 13, 6 -> 6, same |
+
+Largest difference 0.058, no logit changes sign, and every window picks the same beats and
+downbeats as PyTorch, on both runtimes. (The file before `fp16_biases.py`: 0.052, likewise the
+same picks.) Not run: the 1.4.2 AAR itself (an Android library; the JVM unit tests cannot load
+it), and anything on a phone.
+
+**Pace on a slow phone.** `BeatTracker` times its first three windows (the median, so the first
+run's start-up does not count; silent windows skip the network and are not timed). Above
+**500 ms** it runs one window every 2 s: half of a core all the time is more than a listening
+app should take (section 4), and Basic Pitch and the rest of the analysis need the phone too.
+At 2 s, above **1500 ms** (3/4 of the time, where Details says "Falling behind") it gives up and
+the standard tracker takes over; Details says so. Learnt once per launch and never stepped back
+up; choosing Accurate again in Settings starts over. By section 4's estimates an A78-class phone
+stays at 1 s (0.22-0.45 s) and an A55-only phone goes to 2 s (0.7-1.3 s). Readings are dated in
+audio time, and the reading's pooling is per second of music (`tools/beatthis/README.md`
+section 8), so the 2 s pace only makes the screen update less often.
+
+**APK (M).** `assembleRelease` (R8, no ABI filter, so all four ABIs): 2,488,804 -> 27,114,927
+bytes (+24.6 MB: native libraries 20.0 MB, model 4.56 MB, code 26 KB). For one ABI, as an App
+Bundle or a split APK delivers it, arm64-v8a adds 4.48 + 4.56 = 9.0 MB. `assembleDebug`:
+12,734,719 -> 37,377,834 bytes.
+
 ## Files
 
 | path | what |
@@ -238,6 +313,7 @@ only if ART's code proves as good as C2's. INT8 is not worth its accuracy loss.
 | `scripts/convert_tflite.py` | litert-torch conversion, FP16 (float casting) and INT8 (dynamic) with ai-edge-quantizer; `--gpu-friendly` |
 | `scripts/bt_export_gpu.py` | rank <= 4, no-L2_NORMALIZATION export module |
 | `scripts/run_tflite.py` | LiteRT interpreter: logits, timing (XNNPACK on/off) |
+| `scripts/fp16_biases.py` | stores an FP16 file's biases as FP16 too, so LiteRT 1.4's XNNPACK takes the whole graph (section 8) |
 | `scripts/gpu_try.py`, `scripts/gpu_toys.py` | LiteRT GPU accelerator on lavapipe: partition, logits; small modules |
 | `scripts/compare.py`, `scripts/summarise_accuracy.py`, `scripts/accuracy_all.sh` | accuracy vs PyTorch |
 | `scripts/clock.c` | effective clock check |

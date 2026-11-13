@@ -579,3 +579,23 @@ default). Band uses small0, Guitar final0, both as FP16 Core ML packages of 412 
 * The standard tracker keeps running beside it: the chord grid stays on it (chords are the same
   in both modes), and if the network fails the analyser goes back to it.
 
+
+## 8. In the Android app
+
+`app/src/main/kotlin/com/donfluids/music/dsp/BeatThis.kt` is the Kotlin port of `BeatThis.swift`
+(same types, functions and constants; tested against the same fixtures), and
+`LiteRtBeatThis.kt` in the app runs the network through LiteRT. Settings has the same switch with
+the same wording. What differs from the iPhone (details, timings and the check of the shipped
+file in `android/README.md` section 8):
+
+* One model for Band and Guitar: small0, the GPU-friendly graph (`android/scripts/bt_export_gpu.py`)
+  with FP16 weights and biases (`android/scripts/fp16_biases.py`), 4.6 MB, on the CPU through
+  XNNPACK with one thread (LiteRT 1.4.2's Interpreter). No GPU delegate.
+* A slow-phone cadence: the first three windows are timed (median); above 500 ms the tracker
+  runs one window every 2 s instead of every second; at 2 s, a median above 1500 ms sends the
+  analyser back to the standard tracker, and Details says so. Learnt once per launch; choosing
+  Accurate again in Settings starts over. Everything that counted readings is per second of music
+  instead: the comb keeps 0.5^dt of its scores and adds (1 - 0.5^dt) / 0.5 times a reading's
+  evidence, the compound pooling 0.95^dt and (1 - 0.95^dt) / 0.05, its period smoothing 0.8^dt,
+  its holds count seconds (5), and "locked" looks back 2 s (3 readings at 1 s, 2 at 2 s), where
+  dt is the time since the previous reading. At dt = 1 every rule is the iPhone's, bit for bit.

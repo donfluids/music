@@ -34,8 +34,12 @@ The mathematics behind every stage, with equations and the constants the code us
    two or three seconds, the tempo within about four, and the time signature needs two to four
    bars. The chord is confirmed with a little look-ahead, so it lands about a second late (one to two beats),
    and about a second more with Basic Pitch, the default note listener for Band and Guitar.
-   Melodies (Voices) are followed with CREPE by default. In Settings these are the "Accurate"
-   choices; "Standard" switches back to the older method, which asks less of the phone.
+   Melodies (Voices) are followed with CREPE by default, and in Band and Guitar the tempo and
+   time signature come from Beat This! (first tempo after 4 seconds; 2, 3 or 4 beats per bar;
+   6/8 or 12/8 only when the beat clearly divides in three for about 20 seconds). In Settings
+   these are the "Accurate" choices; "Standard" switches back to the older method, which asks
+   less of the phone. On a slow phone Beat This! looks at the music every two seconds instead
+   of every second, and if even that is too much it goes back to Standard and Details says so.
 3. **Hold** freezes the key so nothing changes under your hands; the chord and beat keep
    running. Tap again to release.
 4. **Transpose**, beside the chords of the key, shifts every displayed key and chord to what you should play, for example
@@ -111,6 +115,7 @@ and has no Android dependencies, so it is covered by JVM unit tests.
 | Onsets | Log‑compressed spectral flux, 2048‑point FFT, 512‑sample hop. |
 | Tempo | Autocorrelation of the detrended onset curve over 40–220 BPM, weighted by a log‑normal prior centred on 100 BPM, with the phase chosen to line beats up with the strongest onsets. |
 | Meter | Onset strength sampled on each beat, folded into candidate bars of 2–7 beats at every downbeat offset and correlated with accent templates (4/4, 3/4, 6/8, 2+2+3 for 7/8, …). A separate check of energy halfway versus a third of the way between beats tells simple from compound meter. |
+| Tempo and meter (Accurate) | Beat This! (small), a learned beat and downbeat tracker, on the newest 8 s of a 128‑band log‑mel spectrogram, once a second from 4 s (every 2 s on a slow phone), through LiteRT on the CPU in the app (`LiteRtBeatThis.kt`); the rest is plain Kotlin in `dsp/BeatThis.kt`. Tempo from the median of the last 8 beat intervals, 2, 3 or 4 beats per bar from a comb on the downbeat probability, simple or compound from the onset curve read at halves and thirds of the beat over about 20 s. The tracker above keeps running for the chord grid and as the fallback. Spec and measurements: `tools/beatthis`. |
 
 Limits worth knowing: a congregation without a rhythm section gives weak onsets, so the
 tempo and meter are less certain than the key. Modal songs (Dorian, Mixolydian) are reported
