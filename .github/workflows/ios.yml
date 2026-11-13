@@ -27,7 +27,11 @@ jobs:
 
       - name: Engine tests (with Core ML)
         working-directory: ios/KeyCatchCore
-        run: swift test 2>&1 | tee ../../engine-tests.log
+        # Release build: the analyser tests push minutes of synthesised audio through the engine,
+        # which a debug build runs many times slower. -enable-testing keeps @testable imports working.
+        run: |
+          set -o pipefail
+          swift test -c release -Xswiftc -enable-testing 2>&1 | tee ../../engine-tests.log
 
       - name: Generate the Xcode project
         working-directory: ios
