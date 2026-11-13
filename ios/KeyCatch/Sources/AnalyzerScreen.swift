@@ -445,7 +445,7 @@ private struct BeatRow: View {
                         }
                     }
                     .frame(width: size, height: size)
-                    .scaleEffect(active ? 1 + 0.3 * exp(-phase * 6) : 1)
+                    .scaleEffect(active ? CGFloat(1 + 0.3 * exp(-phase * 6)) : 1)
                 }
             }
         }
@@ -494,13 +494,13 @@ private struct TunerDial: View {
     @Environment(\.palette) private var p
     var body: some View {
         Canvas { ctx, size in
-            let sweep = 100.0
-            let half = sweep / 2 * .pi / 180
-            let r = (size.width / 2 - 6) / sin(half)
+            let sweep: Double = 100
+            let half: CGFloat = CGFloat(sweep / 2 * Double.pi / 180)
+            let r: CGFloat = (size.width / 2 - 6) / sin(half)
             // The pivot sits below the box, so only the top of the dial shows.
             let pivot = CGPoint(x: size.width / 2, y: 6 + r)
             func at(_ c: Double, _ radius: CGFloat) -> CGPoint {
-                let ang = (270 + sweep / 2 * c / 50) * .pi / 180
+                let ang = CGFloat((270 + sweep / 2 * c / 50) * Double.pi / 180)
                 return CGPoint(x: pivot.x + radius * cos(ang), y: pivot.y + radius * sin(ang))
             }
             func arc(_ from: Double, _ span: Double) -> Path {
@@ -564,7 +564,7 @@ private struct PulseDot: View {
             let phase = elapsed - elapsed.rounded(.down)
             Circle().fill(p.primary)
                 .frame(width: 22, height: 22)
-                .scaleEffect(1 + 0.35 * exp(-phase * 6))
+                .scaleEffect(CGFloat(1 + 0.35 * exp(-phase * 6)))
                 .opacity(0.5 + 0.5 * exp(-phase * 4))
         }
         .accessibilityHidden(true)
