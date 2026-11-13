@@ -19,3 +19,6 @@ keystore.properties
 
 # Node (docs/math build)
 node_modules/
+
+# Python
+__pycache__/
