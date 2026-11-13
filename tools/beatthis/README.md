@@ -209,9 +209,16 @@ arithmetic (Core ML / the Neural Engine may accumulate differently). Before ship
 Measured with `bench_speed.py`: Intel Xeon @ 2.10 GHz (4 vCPU, cloud VM), torch 2.7.1+cpu,
 one forward pass of W s of frames + 12 border frames, median (min) of 15 runs after 3 warm-ups.
 
-SPEED_TABLE
+| checkpoint | W (s) | input frames | 1 thread median (min) ms | 4 threads median (min) ms | NumPy log-mel of W s, ms |
+|---|---|---|---|---|---|
+| small0 | 6 | 312 | 116.0 (113.1) | 51.7 (45.0) | 2.3 |
+| small0 | 8 | 412 | 176.1 (171.6) | 76.3 (71.8) | 2.9 |
+| small0 | 12 | 612 | 344.2 (331.7) | 140.9 (123.2) | 5.7 |
+| final0 | 6 | 312 | 221.9 (207.7) | 91.7 (79.1) | 2.3 |
+| final0 | 8 | 412 | 304.8 (279.7) | 99.2 (95.8) | 3.0 |
+| final0 | 12 | 612 | 471.2 (451.4) | 158.4 (153.9) | 6.1 |
 
-small0 is only about 1.3-2x faster than final0 although it has a tenth of the parameters:
+small0 is only 1.4-1.9x faster than final0 on one thread (1.1-1.8x on four) although it has a tenth of the parameters:
 most of its time goes to the frequency/time attention of the front end at full frame rate
 (shared by both sizes). Cost grows faster than linearly with W (attention is quadratic in T).
 Batching several windows was slower per window than one at a time on this CPU (measured:
