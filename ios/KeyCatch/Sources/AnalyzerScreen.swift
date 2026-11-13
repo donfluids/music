@@ -742,7 +742,7 @@ private struct DetailsFold: View {
     let sh: Shown
     @State private var open = Screenshots.detailsOpen
     /// A long press on the heading adds the raw timings, for testing on a new phone.
-    @State private var timings = false
+    @State private var timings = Screenshots.detailsOpen
 
     var body: some View {
         let a = model.analysis
@@ -775,7 +775,7 @@ private struct DetailsFold: View {
                     }
                     DetailRow(label: S.notesHeard) { ChromaBars(chroma: a.chroma, key: sh.key?.transposed(-sh.transpose), naming: sh.naming) }
                     // The learned models' cost as a share of real time: CREPE runs once per chroma
-                    // frame (about 46 ms of audio), Basic Pitch reports milliseconds per second.
+                    // frame (about 46 ms of audio), Basic Pitch and Beat This! report milliseconds per second.
                     let loads = modelLoads(a)
                     if !loads.isEmpty {
                         DetailRow(label: S.phoneLoad) {
@@ -809,6 +809,7 @@ private struct DetailsFold: View {
         var loads: [(String, Float)] = []
         if let m = a.pitchModel, m != "autocorrelation" { loads.append((m, a.pitchMillis / 46)) }
         if let m = a.notesModel { loads.append((m, a.notesMillisPerSecond / 1000)) }
+        if let m = a.beatModel { loads.append((m, a.beatMillisPerSecond / 1000)) }
         return loads
     }
 }

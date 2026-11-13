@@ -1,7 +1,8 @@
 import KeyCatchCore
 import SwiftUI
 
-/// The tuning reference, note names, chord names or numbers, how notes are heard, and the theme.
+/// The tuning reference, note names, chord names or numbers, how notes and the beat are heard,
+/// and the theme.
 /// Each is saved as soon as it changes.
 struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
@@ -41,6 +42,10 @@ struct SettingsScreen: View {
                     Heading(S.settingsNotes)
                     Segmented(labels: [S.notesStandard, S.notesBasicPitch], selected: model.basicPitch ? 1 : 0) { model.setBasicPitch($0 == 1) }
                     Help(S.settingsNotesHelp)
+
+                    Heading(S.settingsBeat)
+                    Segmented(labels: [S.beatStandard, S.beatBeatThis], selected: model.beatThis ? 1 : 0) { model.setBeatThis($0 == 1) }
+                    Help(S.settingsBeatHelp)
 
                     Heading(S.settingsPitch)
                     Segmented(labels: [S.pitchStandard, S.pitchCrepe], selected: model.crepe ? 1 : 0) { model.setCrepe($0 == 1) }

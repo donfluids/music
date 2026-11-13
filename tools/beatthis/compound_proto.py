@@ -37,11 +37,17 @@ def kround(x):
 
 def detrend(x):
     """TempoTracker.estimate(): 1-2-1 smoothing, then minus a +-0.75 s moving average."""
+    return detrend_rate(x, FPS)
+
+
+def detrend_rate(x, fps):
+    """detrend() for any onset frame rate (sample rate / 512)."""
+    trend = max(1, kround(0.75 * fps))
     n = len(x)
     lin = 0.25 * x[np.maximum(0, np.arange(n) - 1)] + 0.5 * x + 0.25 * x[np.minimum(n - 1, np.arange(n) + 1)]
     c = np.concatenate([[0.0], np.cumsum(lin, dtype=np.float64)])
-    lo = np.maximum(0, np.arange(n) - TREND)
-    hi = np.minimum(n - 1, np.arange(n) + TREND)
+    lo = np.maximum(0, np.arange(n) - trend)
+    hi = np.minimum(n - 1, np.arange(n) + trend)
     return lin - (c[hi + 1] - c[lo]) / (hi - lo + 1)
 
 
@@ -157,7 +163,39 @@ def main():
         t, o = res["t"], res["o"]
         print(f"| {label} | {t[0]:.1f}% | {o[0]:.1f}% | {t[1]}/{t[2]} | {o[1]}/{o[2]} |")
     print()
+    feel_table(a.work, a.ckpts, a.window, items)
+    print()
     separability(a.work, a.ckpts, a.window, tern, other)
+
+
+def feel_table(work, ckpts, window, items):
+    """The decision the iPhone app ships (bt_live.Feel): pooled over about 20 s, with hysteresis."""
+    from bt_live import Feel, feel_energies
+    groups = (("ternary (12/8, 9/8)", [i for i in items if i.get("ternary")]),
+              ("other clips of the random sample", [i for i in items if i.get("random_sample") and not i.get("ternary")]),
+              ("3/4", [i for i in items if i.get("meter") == "3/4"]))
+    print("| bt_live.Feel on | " + " | ".join(f"{g}: moments shown compound | clips with any" for g, _ in groups) + " |")
+    print("|---|" + "---|---|" * len(groups))
+    for ck in ckpts:
+        cells = []
+        for _, its in groups:
+            mom, anyc, n = [], 0, 0
+            for it in its:
+                live = json.load(open(os.path.join(work, "bt", ck, it["id"] + ".json")))[f"live_{window:g}"]
+                onsets = np.fromfile(os.path.join(work, "onsets", it["id"] + ".f32"), dtype="<f4")
+                feel = Feel()
+                flags = []
+                for m, _, bpm, _, last, period, _ in bt_readouts(live):
+                    if bpm is not None:
+                        e, pf = feel_energies(onsets, RATE, HOP, m, last, period)
+                        if e is not None:
+                            feel.update(e, pf)
+                    flags.append(feel.compound)
+                mom.extend(flags)
+                anyc += any(flags)
+                n += 1
+            cells.append(f"{100 * np.mean(mom):.1f}% | {anyc}/{n}")
+        print(f"| Beat This {ck}, W={window:g} s | " + " | ".join(cells) + " |")
 
 
 def separability(work, ckpts, window, tern, other):

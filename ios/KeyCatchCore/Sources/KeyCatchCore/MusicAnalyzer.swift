@@ -84,6 +84,10 @@ public struct AnalysisResult: Sendable {
     public var notesModel: String? = nil
     /// Its running cost in milliseconds per second of audio.
     public var notesMillisPerSecond: Float = 0
+    /// What follows the beat: a Beat This! model, or nil for the standard tracker.
+    public var beatModel: String? = nil
+    /// Its running cost in milliseconds per second of audio.
+    public var beatMillisPerSecond: Float = 0
 
     public init() {}
 }
@@ -106,6 +110,9 @@ public final class MusicAnalyzer {
     private let pitchTracker: PitchEstimator?
     private var pitchMillis = 0.0
     private let heard: HeardNotes?
+    /// Beat This!, when it follows the beat; the standard tracker keeps running beside it for
+    /// the chord grid, and takes over if the network fails.
+    private let beatThis: BeatTracker?
     /// How far behind the audio the chord and key finders read when `heard` is used, in hops.
     private var readBehindHops = 0
     private func behindHops(_ h: HeardNotes) -> Int { Int((h.delaySeconds * Double(sampleRate) / Double(hopSize)).rounded(.up)) }
@@ -229,8 +236,11 @@ public final class MusicAnalyzer {
     ///     the melody. The app passes CREPE; without one the autocorrelation tracker is used.
     ///   - notes: builds the note listener for a sample rate, for presets that read chords. When
     ///     given, chords and key come from the notes it hears instead of the spectral chroma.
+    ///   - beats: builds the Beat This! tracker for a sample rate and hop size, for presets that
+    ///     read the beat. When given, the tempo and time signature come from it.
     public init(sampleRate: Int, preset: AnalysisPreset = .band, hopSize: Int = 512,
-                pitch: ((Int) -> PitchEstimator)? = nil, notes: ((Int) -> HeardNotes)? = nil) {
+                pitch: ((Int) -> PitchEstimator)? = nil, notes: ((Int) -> HeardNotes)? = nil,
+                beats: ((Int, Int) -> BeatTracker)? = nil) {
         self.sampleRate = sampleRate
         self.preset = preset
         self.hopSize = hopSize
@@ -243,6 +253,7 @@ public final class MusicAnalyzer {
         meterDetector = MeterDetector(minBeats: preset.meterMinBeats)
         pitchTracker = preset.melodicKey ? (pitch?(sampleRate) ?? PitchTracker(sampleRate)) : nil
         heard = !preset.melodicKey ? notes?(sampleRate) : nil
+        beatThis = preset.readsBeat ? beats?(sampleRate, hopSize) : nil
         windowSize = chromaExtractor.windowSamples
         window = [Float](repeating: 0, count: windowSize)
         pending = [Float](repeating: 0, count: hopSize)
@@ -255,6 +266,7 @@ public final class MusicAnalyzer {
     public func reset() {
         chromaExtractor.reset()
         heard?.reset()
+        beatThis?.reset()
         heardFrame = [Float](repeating: 0, count: 12)
         heardAccum = [Float](repeating: 0, count: 12)
         heardWeight = 0
@@ -352,8 +364,13 @@ public final class MusicAnalyzer {
         levelRms += sq
         levelSamples += hopSize
 
-        tempoTracker.push(onsetDetector.process(window, windowSize - onsetDetector.fftSize))
+        let onset = onsetDetector.process(window, windowSize - onsetDetector.fftSize)
+        tempoTracker.push(onset)
         heard?.push(pending, 0, hopSize)
+        if let b = beatThis {
+            b.pushOnset(onset)
+            b.push(pending, 0, hopSize)
+        }
 
         var changed = false
         if hopIndex % chromaEveryHops == 0 {
@@ -768,6 +785,39 @@ public final class MusicAnalyzer {
         r.pitchMillis = Float(pitchMillis)
         r.notesModel = heard != nil ? "Basic Pitch" : nil
         r.notesMillisPerSecond = Float(heard?.millisPerSecond ?? 0)
+        if let b = beatThis, !b.failed { publishBeat(b, &r) }
         result = r
+    }
+
+    /// The tempo and time signature from Beat This!'s newest reading, in place of the standard
+    /// tracker's. The reading dates its newest beat in seconds of audio; the published beat is
+    /// the latest one at or before now, stepped on from there by whole periods.
+    private func publishBeat(_ b: BeatTracker, _ r: inout AnalysisResult) {
+        r.beatModel = b.name
+        r.beatMillisPerSecond = Float(b.millisPerSecond)
+        let reading = b.latest
+        r.bpm = reading?.bpm.map { Float($0) }
+        r.tempoStrength = Float(reading?.strength ?? 0)
+        r.tempoLocked = reading?.locked ?? false
+        r.beatPeriodMillis = 0
+        r.lastBeatAtNanos = 0
+        r.meterLabel = nil
+        r.beatsPerBar = 0
+        r.meterCompound = false
+        r.meterConfidence = 0
+        r.lastBeatIndexInBar = 0
+        r.meterScores = [:]
+        guard let reading, reading.bpm != nil, let last = reading.lastBeatSeconds, let period = reading.periodSeconds, period > 0 else { return }
+        let now = Double(hopIndex) * hopSeconds
+        let beatsSince = max(0, Int(((now - last) / period).rounded(.down)))
+        r.beatPeriodMillis = Float(period * 1000)
+        r.lastBeatAtNanos = hopEndNanos - Int((now - last - Double(beatsSince) * period) * 1e9)
+        guard let bpb = reading.beatsPerBar else { return }
+        r.meterLabel = reading.meterLabel
+        r.beatsPerBar = bpb
+        r.meterCompound = reading.compound
+        r.meterConfidence = Float(reading.meterConfidence)
+        r.lastBeatIndexInBar = floorMod(reading.lastBeatIndexInBar + beatsSince, bpb)
+        r.meterScores = reading.barScores.mapValues { Float($0) }
     }
 }

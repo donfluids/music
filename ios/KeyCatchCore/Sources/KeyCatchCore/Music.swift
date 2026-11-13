@@ -241,20 +241,23 @@ public struct AnalysisPreset: Hashable, Sendable, Identifiable {
     /// Whether the screen shows a tempo and time signature read from the sound. Singing alone
     /// rarely gives a pulse, so with this off the player taps the tempo in instead.
     public var readsBeat: Bool = true
+    /// The Beat This! size that follows the beat when the beat is set to Accurate; nil for a
+    /// preset that does not read the beat.
+    public var beatModel: BeatThisModel? = nil
 
     /// Drums, guitar, keys and voices through a monitor. Kick and snare drive the beat.
     public static let band = AnalysisPreset(
         id: "band", title: "Band", description: "Drums, guitar, keys and voices. The kick and snare set the beat.",
         onsetMinHz: 30, onsetMaxHz: 8000, onsetGamma: 20, onsetLowBandMaxHz: 250, onsetLowBandWeight: 1.5,
         chromaMinHz: 55, chromaMaxHz: 3000, chromaRollOffHz: 1000, keyMemorySeconds: 8,
-        tempoPriorCenterBpm: 120, tempoPriorWidthOctaves: 0.55, meterMinBeats: 8)
+        tempoPriorCenterBpm: 120, tempoPriorWidthOctaves: 0.55, meterMinBeats: 8, beatModel: .small)
 
     /// Guitar-led with no drums: strums are the beat, string overtones are ignored.
     public static let guitar = AnalysisPreset(
         id: "guitar", title: "Guitar", description: "Guitar and voices, no drums. Strums set the beat.",
         onsetMinHz: 60, onsetMaxHz: 6000, onsetGamma: 10, onsetLowBandMaxHz: 0, onsetLowBandWeight: 0,
         chromaMinHz: 70, chromaMaxHz: 2500, chromaRollOffHz: 800, keyMemorySeconds: 8,
-        tempoPriorCenterBpm: 120, tempoPriorWidthOctaves: 0.55, meterMinBeats: 8)
+        tempoPriorCenterBpm: 120, tempoPriorWidthOctaves: 0.55, meterMinBeats: 8, beatModel: .full)
 
     /// Singing with little or no rhythm section: syllables are the only onsets.
     public static let voices = AnalysisPreset(

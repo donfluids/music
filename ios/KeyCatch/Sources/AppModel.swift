@@ -52,6 +52,8 @@ final class AppModel {
     var crepe: Bool
     /// Hear the notes for chords and key with Basic Pitch (the default) or the spectral chroma.
     var basicPitch: Bool
+    /// Follow the beat in Band and Guitar with Beat This! (the default) or the standard tracker.
+    var beatThis: Bool
     /// Songs heard, newest first, saved on the phone.
     var history: [SongRecord] = []
     var showHistory = false
@@ -64,6 +66,8 @@ final class AppModel {
     private let audioQueue = DispatchQueue(label: "KeyCatch-audio", qos: .userInitiated)
     /// Basic Pitch runs here, off the audio queue, so a slow phone cannot hold up the microphone.
     private let notesQueue = DispatchQueue(label: "KeyCatch-notes", qos: .utility)
+    /// Beat This! runs here, once a second, for the same reason.
+    private let beatQueue = DispatchQueue(label: "KeyCatch-beat", qos: .utility)
     private let historyQueue = DispatchQueue(label: "KeyCatch-history")
     private let songHistory: SongHistory
     private let tapTempo = TapTempo()
@@ -78,10 +82,11 @@ final class AppModel {
     }
     private var session: Session?
 
-    /// The two learned models, loaded (and compiled, the first time) off the main thread at launch.
+    /// The learned models, loaded (and compiled, the first time) off the main thread at launch.
     /// Until they are ready, or if they cannot be loaded, the standard methods are used.
     private var crepeModel: MLModel?
     private var basicPitchModel: MLModel?
+    private var beatModels: [BeatThisModel: MLModel] = [:]
 
     init() {
         preset = AnalysisPreset.byId(prefs.string(forKey: Pref.preset))
@@ -92,6 +97,7 @@ final class AppModel {
         // The learned models are the default; a choice made in Settings is kept.
         crepe = prefs.object(forKey: Pref.crepe) as? Bool ?? true
         basicPitch = prefs.object(forKey: Pref.basicPitch) as? Bool ?? true
+        beatThis = prefs.object(forKey: Pref.beatThis) as? Bool ?? true
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         songHistory = SongHistory(url: support.appendingPathComponent("history.json"))
         // In screenshot mode the screens show prepared songs instead of the saved list.
@@ -110,9 +116,13 @@ final class AppModel {
         Task.detached(priority: .utility) {
             let crepe = try? KeyCatchModels.load("CrepeTiny")
             let basicPitch = try? KeyCatchModels.load("BasicPitchNotes")
+            var loaded: [BeatThisModel: MLModel] = [:]
+            for which in BeatThisModel.allCases { if let m = try? KeyCatchModels.load(which.resourceName) { loaded[which] = m } }
+            let beats = loaded
             await MainActor.run {
                 self.crepeModel = crepe
                 self.basicPitchModel = basicPitch
+                self.beatModels = beats
             }
         }
     }
@@ -175,11 +185,17 @@ final class AppModel {
     private func newAnalyzer(_ rate: Int, _ preset: AnalysisPreset) -> MusicAnalyzer {
         let crepeModel = preset.melodicKey && crepe ? self.crepeModel : nil
         let notesModel = !preset.melodicKey && basicPitch ? basicPitchModel : nil
+        // Band uses the small Beat This!, Guitar the full one; Voices taps its tempo.
+        let beat = beatThis ? preset.beatModel : nil
+        let beatModel = beat.flatMap { beatModels[$0] }
         let notesQueue = self.notesQueue
+        let beatQueue = self.beatQueue
         return MusicAnalyzer(
             sampleRate: rate, preset: preset,
             pitch: crepeModel.flatMap { m in (try? CoreMLCrepe(model: m)).map { net in { (r: Int) -> PitchEstimator in CrepePitch(net, r) } } },
-            notes: notesModel.flatMap { m in (try? CoreMLBasicPitch(model: m)).map { net in { (r: Int) -> HeardNotes in HeardNotes(net, r, worker: notesQueue) } } })
+            notes: notesModel.flatMap { m in (try? CoreMLBasicPitch(model: m)).map { net in { (r: Int) -> HeardNotes in HeardNotes(net, r, worker: notesQueue) } } },
+            beats: beatModel.flatMap { m in (try? CoreMLBeatThis(model: m)).map { net in
+                { (r: Int, hop: Int) -> BeatTracker in BeatTracker(net, r, hopSize: hop, name: beat!.title, worker: beatQueue) } } })
     }
 
     /// Hands a fresh analyser to the audio queue; the old one is never touched again.
@@ -266,6 +282,14 @@ final class AppModel {
         prefs.set(on, forKey: Pref.basicPitch)
         basicPitch = on
         if !preset.melodicKey { replaceAnalyzer(); analysis = AnalysisResult(); heldKey = nil }
+    }
+
+    /// Switch how the beat is followed. While listening in Band or Guitar, analysis starts over.
+    func setBeatThis(_ on: Bool) {
+        guard on != beatThis else { return }
+        prefs.set(on, forKey: Pref.beatThis)
+        beatThis = on
+        if preset.readsBeat { replaceAnalyzer(); analysis = AnalysisResult(); heldKey = nil; tempoMultiplier = 1 }
     }
 
     /// Dark, light, or nil to follow the system.
@@ -382,5 +406,6 @@ final class AppModel {
         static let naming = "naming"
         static let crepe = "crepe"
         static let basicPitch = "basicPitch"
+        static let beatThis = "beatThis"
     }
 }

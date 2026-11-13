@@ -8,7 +8,7 @@ import Foundation
 public enum KeyCatchModels {
     public enum Failure: Error { case missing(String), unexpectedOutput(String) }
 
-    /// The compiled model for `name` ("CrepeTiny" or "BasicPitchNotes"). Xcode generates a Swift
+    /// The compiled model for `name` ("CrepeTiny", "BasicPitchNotes", "BeatThisSmall" or "BeatThisFull"). Xcode generates a Swift
     /// class named after each model package, so a package must not share its name with a source
     /// file or type of the engine (hence not "BasicPitch", which BasicPitch.swift already is).
     public static func load(_ name: String, computeUnits: MLComputeUnits = .all) throws -> MLModel {
@@ -137,6 +137,32 @@ public final class CoreMLBasicPitch: NoteNetwork {
     public func notes(window: [Float], from: Int, to: Int) -> [[Float]] {
         let all = outputs(window: window)[noteOutput] ?? [Float](repeating: 0, count: BasicPitch.FRAMES * BasicPitch.NOTES)
         return (from..<to).map { t in Array(all[(t * BasicPitch.NOTES)..<((t + 1) * BasicPitch.NOTES)]) }
+    }
+}
+/// Beat This! through Core ML (converted by tools/beatthis/convert_coreml.py, FP16): input
+/// "spect", (1, 412, 128) log-mel frames; outputs "beat" and "downbeat", (1, 412) logits.
+public final class CoreMLBeatThis: BeatNetwork {
+    private let model: MLModel
+    private let input: MLMultiArray
+
+    public init(model: MLModel) throws {
+        self.model = model
+        input = try MLMultiArray(shape: [1, NSNumber(value: BeatThis.INPUT_FRAMES), NSNumber(value: BeatThis.MELS)], dataType: .float32)
+    }
+
+    public convenience init(_ which: BeatThisModel) throws { try self.init(model: KeyCatchModels.load(which.resourceName)) }
+
+    public func logits(_ spect: [Float]) -> (beat: [Float], downbeat: [Float])? {
+        let count = BeatThis.INPUT_FRAMES * BeatThis.MELS
+        guard spect.count == count else { return nil }
+        let p = input.dataPointer.assumingMemoryBound(to: Float.self)
+        spect.withUnsafeBufferPointer { s in for i in 0..<count { p[i] = s[i] } }
+        guard let features = try? MLDictionaryFeatureProvider(dictionary: ["spect": MLFeatureValue(multiArray: input)]),
+              let out = try? model.prediction(from: features),
+              let beat = out.featureValue(for: "beat")?.multiArrayValue,
+              let downbeat = out.featureValue(for: "downbeat")?.multiArrayValue
+        else { return nil }
+        return (KeyCatchModels.floats(beat), KeyCatchModels.floats(downbeat))
     }
 }
 #endif

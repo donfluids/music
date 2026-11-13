@@ -46,6 +46,7 @@ enum Screenshots {
             a.songKey = g
             a.chordSegments = [ChordSegment(chord(7), 30, 32), ChordSegment(chord(4, .minor), 32, 34), ChordSegment(chord(0), 34, 36), ChordSegment(chord(2), 36, 40)]
             a.pitchModel = nil; a.notesModel = "Basic Pitch"; a.notesMillisPerSecond = 30
+            a.beatModel = BeatThisModel.small.title; a.beatMillisPerSecond = 45
             return a
         }
 

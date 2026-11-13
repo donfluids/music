@@ -2,9 +2,9 @@
 
 Groundwork for replacing or backing up KeyCatch's hand-written beat chain
 (OnsetDetector -> TempoTracker -> MeterDetector) with the Beat This! beat/downbeat model
-(Foscarin, Schlüter, Widmer, ISMIR 2024, github.com/CPJKU/beat_this, MIT). Nothing here is
-used by the app yet. All numbers below were measured with the scripts in this folder unless
-marked "read" (taken from upstream docs or code).
+(Foscarin, Schlüter, Widmer, ISMIR 2024, github.com/CPJKU/beat_this, MIT). The iPhone app
+follows this spec (section 7); the Android app does not use it yet. All numbers below were
+measured with the scripts in this folder unless marked "read" (taken from upstream docs or code).
 
 Scripts (all run with `python -I`; the official code is put on `sys.path` from a checkout passed
 as `--beat-this-src`, downloaded data is only read):
@@ -20,6 +20,8 @@ as `--beat-this-src`, downloaded data is only read):
 | `bench_speed.py` | CPU time per forward pass, per checkpoint and window |
 | `live_eval.py` | the live-use evaluation (prepare / swift / beatthis / score) |
 | `compound_proto.py` | simple-vs-compound decision from Beat This! beats with MeterDetector's check, and how separable the evidence is |
+| `bt_live.py` | the reference for the apps' live reading: postprocessing, `Reader` (tempo, last beat, comb, bar position, lock), `Feel` (the shipped compound decision) |
+| `make_fixtures.py` | writes the reference data for the Swift tests (front end, readings, compound, Core ML logits, end to end) |
 | `kclive/` | Swift command-line drivers on KeyCatchCore: `kclive` (MusicAnalyzer, 1024-sample chunks), `kconsets` (onset signal dump) |
 
 ## 1. Upstream code, checkpoints, licences
@@ -440,7 +442,28 @@ MeterDetector's subdivision check on Beat This beats works mechanically but is n
 check is today. Proposal: keep the 6/8-12/8 decision outside the network, computed on the
 Beat This beat grid from the onset signal the app already has, pooled over many beats (tens of
 seconds) and with hysteresis before the label switches; and treat it as a separate, slower
-"feel" decision that never changes the beat count. If better accuracy is wanted, the next step
+"feel" decision that never changes the beat count.
+
+What the iPhone app does (`bt_live.Feel`, Swift `BeatFeel`): at each reading with a tempo, the
+four sums of the check (beat, half, first third, second third) over the 8 s onset history,
+divided by the number of beats, go into a pool that keeps 0.95 of itself per reading (about
+20 s). Compound is shown only after the pool has been strong for 5 readings in a row: at least
+10 readings' worth pooled, thirds above 2 x the halfway point, the two thirds within a factor
+2 of each other, and above a quarter of the beat. It goes back to simple after 5 readings in a
+row without thirds above 1.1 x halfway, and a beat period more than 8 % from the pool's starts
+the pool over (simple). The thresholds were picked from a small grid (pool 0.9/0.95, 5/10
+readings, ratio 1.3-2.0, balance 0.35/0.5, hold 3/5) as the setting with the most ternary
+moments while every false-alarm column stayed near or under 1 %, on these same GTZAN clips, so
+the numbers below are optimistic. Measured (`compound_proto.py`, W 8 s):
+
+| bt_live.Feel on | ternary (12/8, 9/8): moments shown compound | clips with any | other clips of the random sample: moments shown compound | clips with any | 3/4: moments shown compound | clips with any |
+|---|---|---|---|---|---|---|
+| Beat This small0, W=8 s | 1.4% | 2/31 | 0.1% | 1/289 | 0.7% | 1/44 |
+| Beat This final0, W=8 s | 2.1% | 2/31 | 0.4% | 3/289 | 0.0% | 0/44 |
+
+So the label is almost never wrong and almost never shown: a 12/8 song reads as 4/4 (at the
+dotted quarter) nearly always, which is the conservative choice. The 30 s clips also cut the
+pooling short; a whole song gives the pool more time. If better accuracy is wanted, the next step
 is a tiny classifier on per-beat subdivision profiles (onset energy at 1/4, 1/3, 1/2, 2/3, 3/4
 of each beat), trained on GTZAN-Rhythm's ternary/swing labels with clips held out, or reading
 the Beat This beat activation between beats; neither was tried here.
@@ -520,3 +543,29 @@ $V -I live_eval.py --work $E score --ckpts small0 final0 single_small0 single_fi
 # compound check: dump onsets with kconsets (list lines: <clip_44100.f32> <out.f32> 44100 band) into $E/onsets, then
 $V -I compound_proto.py --work $E
 ```
+
+## 7. In the iPhone app
+
+`ios/KeyCatchCore/Sources/KeyCatchCore/BeatThis.swift` (plain Swift, written to port to Kotlin
+line by line) and `CoreMLModels.swift` (`CoreMLBeatThis`). Settings has a beat switch for the
+Band and Guitar presets: Standard (TempoTracker + MeterDetector) or Accurate (Beat This!, the
+default). Band uses small0, Guitar final0, both as FP16 Core ML packages of 412 frames.
+
+* Resampling: KeyCatchCore's StreamResampler (Blackman-windowed sinc, 256 phases) with its
+  cutoff at 10.5 kHz. Measured against soxr on 6 GTZAN and 3 GuitarSet files with small0
+  (`check_resampling`-style, whole files): cutoff 9.5 kHz changed the logits by up to 10.6 and
+  left 489/513 beats on the same frame; 10.5 kHz by 0.75 (44.1 kHz) / 0.78 (48 kHz), 506/511
+  and 502/511 beats on the same frame; 10.8 kHz by 1.3.
+* Front end: frames are made one by one as audio arrives, silence before the start; float32,
+  0.00026 from `frontend_np.py` (float64) on the test signal.
+* Every second from 4 s the newest 400 frames plus 6 zero frames on each side go to the network
+  on a worker queue; a window that is all silence skips the network (it finds no beats in zeros).
+  Readings are dated in seconds of audio, so a late answer still puts the beats where they were.
+* Reading: `bt_live.Reader` (= `live_eval.bt_readouts` for tempo, last beat and beats per bar),
+  plus the bar position of the newest beat (the comb's best phase in this window for the chosen
+  bar length, or the previous position carried on by whole beats) and "locked" (the last three
+  readings within 4 % of each other; the screen says "settling" until then).
+* Compound: `bt_live.Feel` above, on the onset signal of the analyser's own OnsetDetector.
+* The standard tracker keeps running beside it: the chord grid stays on it (chords are the same
+  in both modes), and if the network fails the analyser goes back to it.
+

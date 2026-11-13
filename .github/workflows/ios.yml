@@ -1,6 +1,6 @@
 # Builds and tests the iPhone app on a Mac, since KeyCatch is developed without one.
 # - The engine package's tests, including the Core ML checks that only run on Apple systems
-#   (both models against reference outputs from the original networks).
+#   (the models against reference outputs from the original networks).
 # - The app, generated with XcodeGen and compiled for the simulator and, unsigned, for iPhones.
 name: iOS
 
@@ -34,9 +34,16 @@ jobs:
           grep -E "error:|failed|Executed" ../../engine-tests.log | head -60 || true
           exit $status
 
+      # The Core ML results, and a failure if any Beat This! Core ML test did not run or pass.
       - name: Core ML checks
         if: always()
-        run: grep -E "CoreMLModelsTests|CREPE|Basic Pitch" engine-tests.log || echo "no Core ML lines"
+        run: |
+          grep -E "CoreMLModelsTests|CREPE|Basic Pitch|BeatThisCoreMLTests|Beat This!" engine-tests.log || echo "no Core ML lines"
+          for t in testBeatThisSmallMatchesPyTorch testBeatThisFullMatchesPyTorch testBeatThisSmallEndToEnd \
+                   testBeatThisFullEndToEnd testBeatThisTiming; do
+            grep -qE "BeatThisCoreMLTests[ .]$t\]?' passed" engine-tests.log \
+              || { echo "::error::BeatThisCoreMLTests $t did not run or did not pass"; exit 1; }
+          done
 
       - name: Generate the Xcode project
         working-directory: ios
