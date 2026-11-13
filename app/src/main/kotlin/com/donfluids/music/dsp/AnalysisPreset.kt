@@ -35,6 +35,12 @@ data class AnalysisPreset(
      * taps the tempo in instead.
      */
     val readsBeat: Boolean = true,
+    /**
+     * The Beat This! size that follows the beat when the beat is set to Accurate; null for a
+     * preset that does not read the beat. Android uses the small one for Guitar too (the iPhone
+     * uses the full one there): the full one costs a phone CPU two to three times as much.
+     */
+    val beatModel: BeatThisModel? = null,
 ) {
     companion object {
         /** Drums, guitar, keys and voices through a monitor. Kick and snare drive the beat. */
@@ -48,6 +54,7 @@ data class AnalysisPreset(
             keyMemorySeconds = 8.0,
             tempoPriorCenterBpm = 120.0, tempoPriorWidthOctaves = 0.55,
             meterMinBeats = 8,
+            beatModel = BeatThisModel.SMALL,
         )
 
         /** Guitar-led with no drums: strums are the beat, string overtones are ignored. */
@@ -61,6 +68,7 @@ data class AnalysisPreset(
             keyMemorySeconds = 8.0,
             tempoPriorCenterBpm = 120.0, tempoPriorWidthOctaves = 0.55,
             meterMinBeats = 8,
+            beatModel = BeatThisModel.SMALL,
         )
 
         /** Singing with little or no rhythm section: syllables are the only onsets. */

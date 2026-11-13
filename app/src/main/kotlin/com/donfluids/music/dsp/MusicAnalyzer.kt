@@ -101,6 +101,14 @@ data class AnalysisResult(
     val notesModel: String? = null,
     /** Its running cost in milliseconds per second of audio. */
     val notesMillisPerSecond: Float = 0f,
+    /** What follows the beat: a Beat This! model, or null for the standard tracker. */
+    val beatModel: String? = null,
+    /** Its running cost in milliseconds per second of audio. */
+    val beatMillisPerSecond: Float = 0f,
+    /** Seconds between its windows: 1, or 2 on a slow phone (0 without it). */
+    val beatEverySeconds: Int = 0,
+    /** True when Beat This! was too slow for this phone and the standard tracker took over. */
+    val beatTooSlow: Boolean = false,
 )
 
 /**
@@ -121,6 +129,11 @@ class MusicAnalyzer(
      * chords and key come from the notes it hears instead of the spectral chroma.
      */
     notes: ((Int) -> HeardNotes)? = null,
+    /**
+     * Builds the Beat This! tracker for a sample rate and hop size, for presets that read the
+     * beat. When given, the tempo and time signature come from it.
+     */
+    beats: ((Int, Int) -> BeatTracker)? = null,
 ) {
     private val chromaExtractor = ChromaExtractor(
         sampleRate,
@@ -148,6 +161,11 @@ class MusicAnalyzer(
     private val pitchTracker: PitchEstimator? = if (preset.melodicKey) (pitch?.invoke(sampleRate) ?: PitchTracker(sampleRate)) else null
     private var pitchMillis = 0.0
     private val heard: HeardNotes? = if (!preset.melodicKey) notes?.invoke(sampleRate) else null
+    /**
+     * Beat This!, when it follows the beat; the standard tracker keeps running beside it for
+     * the chord grid, and takes over if the network fails or is too slow for the phone.
+     */
+    private val beatThis: BeatTracker? = if (preset.readsBeat) beats?.invoke(sampleRate, hopSize) else null
     /** How far behind the audio the chord and key finders read when [heard] is used, in hops. */
     private var readBehindHops: Long = heard?.let { behindHops(it) } ?: 0L
     private fun behindHops(h: HeardNotes) = kotlin.math.ceil(h.delaySeconds * sampleRate / hopSize).toLong()
@@ -260,6 +278,7 @@ class MusicAnalyzer(
     fun reset() {
         chromaExtractor.reset()
         heard?.reset()
+        beatThis?.reset()
         heardFrame.fill(0f)
         heardAccum.fill(0f)
         heardWeight = 0.0
@@ -355,8 +374,13 @@ class MusicAnalyzer(
         levelRms += sq
         levelSamples += hopSize
 
-        tempoTracker.push(onsetDetector.process(window, windowSize - onsetDetector.fftSize))
+        val onset = onsetDetector.process(window, windowSize - onsetDetector.fftSize)
+        tempoTracker.push(onset)
         heard?.push(pending, 0, hopSize)
+        beatThis?.let {
+            it.pushOnset(onset)
+            it.push(pending, 0, hopSize)
+        }
 
         var changed = false
         if (hopIndex % chromaEveryHops == 0L) {
@@ -733,7 +757,7 @@ class MusicAnalyzer(
         // over a tracked melody, where the "chords" may be one voice's overtones.
         val chordsOverride = displayFromChords && pitchTracker == null && !samePair(songKey, pendingKey)
         val shownDisplay = if (chordsOverride) songKey else pendingKey
-        result = AnalysisResult(
+        val standard = AnalysisResult(
             secondsHeard = (hopIndex * hopSeconds).toFloat(),
             level = level,
             chroma = chroma.map { it / maxChroma },
@@ -787,6 +811,53 @@ class MusicAnalyzer(
             pitchMillis = pitchMillis.toFloat(),
             notesModel = if (heard != null) "Basic Pitch" else null,
             notesMillisPerSecond = heard?.millisPerSecond?.toFloat() ?: 0f,
+        )
+        val b = beatThis
+        result = when {
+            b == null || b.failed -> standard
+            b.tooSlow -> standard.copy(beatTooSlow = true)
+            else -> withBeat(b, standard)
+        }
+    }
+
+    /**
+     * The tempo and time signature from Beat This!'s newest reading, in place of the standard
+     * tracker's. The reading dates its newest beat in seconds of audio; the published beat is
+     * the latest one at or before now, stepped on from there by whole periods.
+     */
+    private fun withBeat(b: BeatTracker, r: AnalysisResult): AnalysisResult {
+        val cleared = r.copy(
+            beatModel = b.name,
+            beatMillisPerSecond = b.millisPerSecond.toFloat(),
+            beatEverySeconds = b.everySeconds,
+            bpm = null, tempoStrength = 0f, tempoLocked = false,
+            beatPeriodMillis = 0f, lastBeatAtNanos = 0L,
+            meterLabel = null, beatsPerBar = 0, meterCompound = false, meterConfidence = 0f,
+            lastBeatIndexInBar = 0, meterScores = emptyMap(),
+        )
+        val reading = b.latest ?: return cleared
+        val withTempo = cleared.copy(
+            bpm = reading.bpm?.toFloat(),
+            tempoStrength = reading.strength.toFloat(),
+            tempoLocked = reading.locked,
+        )
+        val last = reading.lastBeatSeconds
+        val period = reading.periodSeconds
+        if (reading.bpm == null || last == null || period == null || period <= 0) return withTempo
+        val now = hopIndex * hopSeconds
+        val beatsSince = maxOf(0, kotlin.math.floor((now - last) / period).toInt())
+        val withBeat = withTempo.copy(
+            beatPeriodMillis = (period * 1000).toFloat(),
+            lastBeatAtNanos = hopEndNanos - ((now - last - beatsSince * period) * 1e9).toLong(),
+        )
+        val bpb = reading.beatsPerBar ?: return withBeat
+        return withBeat.copy(
+            meterLabel = reading.meterLabel,
+            beatsPerBar = bpb,
+            meterCompound = reading.compound,
+            meterConfidence = reading.meterConfidence.toFloat(),
+            lastBeatIndexInBar = Math.floorMod(reading.lastBeatIndexInBar + beatsSince, bpb),
+            meterScores = reading.barScores.mapValues { it.value.toFloat() },
         )
     }
 }
