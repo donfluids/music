@@ -13,6 +13,9 @@ import com.donfluids.music.audio.ClipStore
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
 import com.donfluids.music.dsp.BasicPitch
+import com.donfluids.music.dsp.BeatCadence
+import com.donfluids.music.dsp.BeatThisModel
+import com.donfluids.music.dsp.BeatTracker
 import com.donfluids.music.dsp.CrepePitch
 import com.donfluids.music.dsp.HeardNotes
 import com.donfluids.music.dsp.MusicAnalyzer
@@ -69,6 +72,8 @@ data class UiState(
     val crepe: Boolean = true,
     /** Hear the notes for chords and key with Basic Pitch (the default) or the spectral chroma. */
     val basicPitch: Boolean = true,
+    /** Follow the beat in Band and Guitar with Beat This! (the default) or the standard tracker. */
+    val beatThis: Boolean = true,
     /** Songs heard, newest first, saved on the phone. */
     val history: List<SongRecord> = emptyList(),
     val showHistory: Boolean = false,
@@ -102,6 +107,7 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             // The learned models are the default; a choice made in Settings is kept.
             crepe = prefs.getBoolean(PREF_CREPE, true),
             basicPitch = prefs.getBoolean(PREF_BASIC_PITCH, true),
+            beatThis = prefs.getBoolean(PREF_BEAT_THIS, true),
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -218,13 +224,38 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         runCatching { getApplication<Application>().assets.open(BASIC_PITCH_ASSET).use { BasicPitch.Weights.read(it.readBytes()) } }.getOrNull()
     }
 
+    /** Beat This! runs here, once a second (or every two on a slow phone), for the same reason. */
+    private val beatWorker: java.util.concurrent.ExecutorService by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "KeyCatch-beat").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+    }
+
+    /**
+     * Beat This! through LiteRT, shared by every analyser (only the beat worker calls it). It loads
+     * on that worker at the first window; if it cannot, the standard tracker is used without a word.
+     */
+    private val beatNetworks = HashMap<BeatThisModel, LiteRtBeatThis>()
+
+    private fun beatNetwork(model: BeatThisModel): LiteRtBeatThis? {
+        val asset = BEAT_THIS_ASSETS[model] ?: return null
+        return beatNetworks.getOrPut(model) { LiteRtBeatThis(getApplication<Application>().assets, asset) }
+    }
+
+    /** How often this phone can run Beat This!, learnt from the first windows and kept until Settings changes it. */
+    private var beatCadence = BeatCadence()
+
     private fun newAnalyzer(rate: Int, preset: AnalysisPreset): MusicAnalyzer {
         val weights = if (preset.melodicKey && _state.value.crepe) crepeWeights else null
         val notes = if (!preset.melodicKey && _state.value.basicPitch) basicPitchWeights else null
+        // Band and Guitar both use the small Beat This!; Voices taps its tempo.
+        val beat = if (_state.value.beatThis) preset.beatModel else null
+        val cadence = beatCadence
         return MusicAnalyzer(
             rate, preset,
             pitch = weights?.let { w -> { r: Int -> CrepePitch(w, r) } },
             notes = notes?.let { w -> { r: Int -> HeardNotes(w, r, worker = notesWorker) } },
+            beats = beat?.let { m ->
+                beatNetwork(m)?.let { n -> { r: Int, hop: Int -> BeatTracker(n, r, hopSize = hop, name = m.title, worker = beatWorker, cadence = cadence) } }
+            },
         )
     }
 
@@ -311,6 +342,21 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
             session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, preset) }
             recorder.get()?.analysisStartSeconds = 0f
             _state.update { it.copy(analysis = AnalysisResult(), heldKey = null) }
+        }
+    }
+
+    /** Switch how the beat is followed. While listening in Band or Guitar, analysis starts over. */
+    fun setBeatThis(enabled: Boolean) {
+        if (enabled == _state.value.beatThis) return
+        prefs.edit().putBoolean(PREF_BEAT_THIS, enabled).apply()
+        // Choosing Accurate again gives a phone found too slow another try.
+        if (enabled) beatCadence = BeatCadence()
+        _state.update { it.copy(beatThis = enabled) }
+        val preset = _state.value.preset
+        if (preset.readsBeat) {
+            session?.let { it.analyzer = newAnalyzer(it.capture.sampleRate, preset) }
+            recorder.get()?.analysisStartSeconds = 0f
+            _state.update { it.copy(analysis = AnalysisResult(), heldKey = null, tempoMultiplier = 1f) }
         }
     }
 
@@ -452,6 +498,11 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
         stop()
+        if (beatNetworks.isNotEmpty()) {
+            val nets = beatNetworks.values.toList()
+            beatWorker.execute { nets.forEach { it.close() } }
+            beatWorker.shutdown()
+        }
     }
 
     private companion object {
@@ -465,5 +516,8 @@ class AnalyzerViewModel(application: Application) : AndroidViewModel(application
         const val PREF_CREPE = "crepe"
         const val BASIC_PITCH_ASSET = "basic-pitch.bin"
         const val PREF_BASIC_PITCH = "basicPitch"
+        const val PREF_BEAT_THIS = "beatThis"
+        /** Android ships only the small Beat This!, for Band and Guitar alike. */
+        val BEAT_THIS_ASSETS = mapOf(BeatThisModel.SMALL to "beat-this-small.tflite")
     }
 }

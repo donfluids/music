@@ -8,6 +8,7 @@ import com.donfluids.music.AnalyzerViewModel
 import com.donfluids.music.UiState
 import com.donfluids.music.dsp.AnalysisPreset
 import com.donfluids.music.dsp.AnalysisResult
+import com.donfluids.music.dsp.BeatThisModel
 import com.donfluids.music.dsp.KeyLevelTracker
 import com.donfluids.music.dsp.SungNote
 import com.donfluids.music.history.SongRecord
@@ -144,16 +145,31 @@ class ScreenshotTest {
         ))
     }
 
-    @Test fun band() {
+    /** A band in G, with Basic Pitch hearing the notes and Beat This! following the beat (as on the iPhone). */
+    private val bandState: UiState get() {
         val g = Key(7, Mode.MAJOR)
-        shoot("4-band", UiState(
+        return UiState(
             listening = true, preset = AnalysisPreset.BAND,
             analysis = AnalysisResult(
                 secondsHeard = 40f, level = 0.6f, key = g, displayKey = g, keyNow = g, keyRangeLow = g, keyRangeHigh = g,
                 keyConfidence = 0.8f, displayKeyConfidence = 0.8f, keyHeldSeconds = 25f, pairDecided = true, modeDecided = true,
                 bpm = 120f, tempoStrength = 0.6f, tempoLocked = true, beatPeriodMillis = 500f, lastBeatAtNanos = System.nanoTime(),
                 meterLabel = "4/4", beatsPerBar = 4, meterConfidence = 0.7f, currentChord = chord(2),
+                tuningConfidence = 0.6f, tuningCents = 4f,
+                chroma = listOf(0.3f, 0.05f, 0.9f, 0.1f, 0.4f, 0.2f, 0.15f, 1.0f, 0.05f, 0.5f, 0.05f, 0.6f),
+                songKey = g,
+                chordSegments = listOf(ChordSegment(chord(7), 30f, 32f), ChordSegment(chord(4, ChordType.MINOR), 32f, 34f), ChordSegment(chord(0), 34f, 36f), ChordSegment(chord(2), 36f, 40f)),
+                notesModel = "Basic Pitch", notesMillisPerSecond = 30f,
+                beatModel = BeatThisModel.SMALL.title, beatMillisPerSecond = 45f, beatEverySeconds = 1,
             ),
-        ))
+        )
+    }
+
+    @Test fun band() = shoot("4-band", bandState)
+
+    /** The Details fold open with the raw timings (as after a long press on its heading), scrolled to the bottom. */
+    @Test fun bandDetails() {
+        ScreenshotHooks.detailsOpen = true
+        try { shoot("13-band-details", bandState) } finally { ScreenshotHooks.detailsOpen = false }
     }
 }

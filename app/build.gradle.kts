@@ -65,6 +65,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Beat This! is memory-mapped from the APK, which needs it stored uncompressed.
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 kotlin {
@@ -86,6 +91,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // Beat This! on the CPU (XNNPACK).
+    implementation(libs.litert)
 
     testImplementation(libs.junit)
     // Screenshots of the screen, rendered on the build machine (Robolectric) and saved as PNGs (Roborazzi).
