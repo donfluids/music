@@ -72,10 +72,9 @@ way.
 
 - Clips are shared as separate files (a WAV and a JSON per clip) instead of one zip.
 - The learned models run through Core ML, so they can use the iPhone's Neural Engine.
-- The tempo and time signature in Band and Guitar modes come from a learned model, Beat This!
-  (Settings, "Tempo and time signature": Accurate, the default). Android still uses the
-  standard tracker, which the iPhone keeps as Standard and falls back to if the model cannot
-  load. Accurate shows its first tempo after 4 seconds, chooses between 2, 3 and 4 beats per bar,
-  and shows 6/8 or 12/8 only when the beat clearly divides in three over about 20 seconds. Voices
-  mode keeps the tapped tempo either way.
+- Beat This! (Settings, "Tempo and time signature": Accurate, the default, on both phones)
+  follows Guitar with the full model on the iPhone; Android uses the small one for Band and
+  Guitar alike, on the CPU through LiteRT. Android also times its first windows and, on a slow
+  phone, runs one every two seconds instead of every second, or goes back to Standard and says
+  so in Details; the iPhone always runs one a second.
 - The Settings screen opens as a sheet instead of a dialog.

@@ -1,0 +1,435 @@
+package com.donfluids.music.dsp
+
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sqrt
+
+/**
+ * Beat This! (Foscarin, Schlüter, Widmer, ISMIR 2024; CPJKU, MIT): beat and downbeat logits for
+ * every 20 ms frame of a fixed window of log-mel frames. Plain Kotlin, FP32, no ML library: the
+ * same forward pass as tools/beatthis/bt_export.py, with weights from a flat "BTHS" file.
+ *
+ * Activations of the front end are stored token-major as [band][frame][channel], so a
+ * time-attention sequence is contiguous and a frequency-attention sequence is strided by
+ * [frames]. Every linear layer, the convolutions and the projection to the transformer are
+ * one kernel: rows of a source matrix times an input-major weight matrix, added to rows of a
+ * destination. [threads] > 1 splits rows (linear layers) or sequences x heads (attention).
+ *
+ * This file is a measurement prototype (scratchpad), not app code.
+ */
+class BeatThis(private val w: Weights, val frames: Int = 412, threads: Int = 1, private val kernel: Int = KERNEL_K4) {
+
+    private val par = Par(threads)
+    private val t = frames
+    private val big = 1024 * t                     // tokens x channels of every front-end stage
+    private var x = FloatArray(big)
+    private var y = FloatArray(big)
+    private val xn = FloatArray(big)
+    private val qkv = FloatArray(3 * big)
+    private val hid = FloatArray(4 * big)
+    private val att = FloatArray(big)
+    private val gates = FloatArray(32 * t)
+    private val ropeCos = HashMap<Int, FloatArray>()
+    private val ropeSin = HashMap<Int, FloatArray>()
+    private val scratch = Array(max(1, threads)) { AttnScratch(t) }
+
+    init {
+        for (n in intArrayOf(t, 32, 16, 8)) {
+            val c = FloatArray(n * HEAD / 2); val s = FloatArray(n * HEAD / 2)
+            for (p in 0 until n) for (i in 0 until HEAD / 2) {
+                val f = (1.0 / 10000.0.pow(2.0 * i / HEAD)).toFloat()
+                val a = (p.toFloat() * f).toDouble()   // torch: float32 positions x float32 freqs
+                c[p * HEAD / 2 + i] = kotlin.math.cos(a).toFloat(); s[p * HEAD / 2 + i] = kotlin.math.sin(a).toFloat()
+            }
+            ropeCos[n] = c; ropeSin[n] = s
+        }
+    }
+
+    /** [spect]: [frames] x 128 log-mel, time-major. Writes [frames] logits to each output. */
+    fun logits(spect: FloatArray, beat: FloatArray, downbeat: FloatArray) {
+        require(spect.size >= t * 128 && beat.size >= t && downbeat.size >= t)
+        stem(spect)
+        var c = 32; var f = 32
+        for (b in w.blocks) {
+            val tokens = f * t
+            // frequency attention: one sequence per frame, f long, stride t
+            attention(b.attnF, tokens, c, f, t, 1, t)
+            feedForward(b.ffF, tokens, c)
+            // time attention: one sequence per band, t long, contiguous
+            attention(b.attnT, tokens, c, t, 1, t, f)
+            feedForward(b.ffT, tokens, c)
+            conv(b, c, f)
+            c *= 2; f /= 2
+        }
+        // concat "b c f t -> b t (c f)" and the projection to the transformer width
+        val d = w.dim
+        par.rows(t) { lo, hi -> for (r in lo until hi) System.arraycopy(w.linB, 0, y, r * d, d) }
+        for (b in 0 until 4) mm(x, b * t * 256, 256, 256, w.linW, b * 256 * d, y, 0, d, d, t)
+        swap()
+        for (l in w.layers) {
+            attention(l.first, t, d, t, 1, 0, 1)
+            feedForward(l.second, t, d)
+        }
+        rmsNorm(w.normGamma, x, xn, t, d)
+        for (r in 0 until t) {
+            var s0 = w.headB[0]; var s1 = w.headB[1]
+            for (k in 0 until d) { val v = xn[r * d + k]; s0 += v * w.headW[2 * k]; s1 += v * w.headW[2 * k + 1] }
+            downbeat[r] = s1; beat[r] = s0 + s1
+        }
+    }
+
+    private fun swap() { val z = x; x = y; y = z }
+
+    // ---- stem: BatchNorm1d over bands, 4x3 conv (stride 4 in frequency), BatchNorm2d, GELU --
+
+    private fun stem(spect: FloatArray) {
+        val bn = xn // reuse: [frame][band]
+        for (r in 0 until t) for (b in 0 until 128) bn[r * 128 + b] = spect[r * 128 + b] * w.bn1Scale[b] + w.bn1Shift[b]
+        par.rows(32) { lo, hi ->
+            for (fo in lo until hi) for (r in 0 until t) {
+                val o = (fo * t + r) * 32
+                for (k in 0 until 32) x[o + k] = 0f
+                for (df in 0 until 4) for (dt in 0 until 3) {
+                    val tt = r + dt - 1
+                    if (tt < 0 || tt >= t) continue
+                    val a = bn[tt * 128 + 4 * fo + df]
+                    val wo = (df * 3 + dt) * 32
+                    for (k in 0 until 32) x[o + k] += a * w.stemW[wo + k]
+                }
+                for (k in 0 until 32) x[o + k] = gelu(x[o + k] * w.stemScale[k] + w.stemShift[k])
+            }
+        }
+    }
+
+    // ---- (2x3, stride 2x1) conv + BatchNorm2d + GELU: [f][t][cin] -> [f/2][t][2 cin] ----------
+
+    private fun conv(b: Block, cin: Int, f: Int) {
+        val cout = 2 * cin
+        val fo = f / 2
+        java.util.Arrays.fill(y, 0, fo * t * cout, 0f)
+        for (o in 0 until fo) for (df in 0 until 2) for (dt in 0 until 3) {
+            // output rows r in [lo, hi) read input frame r + dt - 1
+            val lo = if (dt == 0) 1 else 0
+            val hi = if (dt == 2) t - 1 else t
+            val src = ((2 * o + df) * t + lo + dt - 1) * cin
+            mm(x, src, cin, cin, b.convW, (df * 3 + dt) * cin * cout, y, (o * t + lo) * cout, cout, cout, hi - lo)
+        }
+        val n = fo * t
+        timed(5) { par.rows(n) { lo, hi ->
+            for (r in lo until hi) {
+                val base = r * cout
+                for (k in 0 until cout) y[base + k] = gelu(y[base + k] * b.convScale[k] + b.convShift[k])
+            }
+        } }
+        swap()
+    }
+
+    // ---- transformer pieces ----------------------------------------------------------------
+
+    private fun rmsNorm(g: FloatArray, src: FloatArray, dst: FloatArray, tokens: Int, c: Int) = timed(3) {
+        par.rows(tokens) { lo, hi ->
+            for (r in lo until hi) {
+                val o = r * c
+                var ss = 0f
+                for (k in 0 until c) { val v = src[o + k]; ss += v * v }
+                val inv = 1f / max(sqrt(ss), 1e-12f)
+                for (k in 0 until c) dst[o + k] = src[o + k] * inv * g[k]
+            }
+        }
+    }
+
+    private fun feedForward(ff: Ff, tokens: Int, c: Int) {
+        val h = 4 * c
+        rmsNorm(ff.gamma, x, xn, tokens, c)
+        par.rows(tokens) { lo, hi -> for (r in lo until hi) System.arraycopy(ff.b1, 0, hid, r * h, h) }
+        mm(xn, 0, c, c, ff.w1, 0, hid, 0, h, h, tokens)
+        timed(2) { par.rows(tokens) { lo, hi -> for (i in lo * h until hi * h) hid[i] = gelu(hid[i]) } }
+        par.rows(tokens) { lo, hi -> for (r in lo until hi) { val o = r * c; for (k in 0 until c) x[o + k] += ff.b2[k] } }
+        mm(hid, 0, h, h, ff.w2, 0, x, 0, c, c, tokens)
+    }
+
+    /**
+     * Gated multi-head self-attention with rotary positions, added to x. Sequence s, position i
+     * is token s * [seqStride] + i * [posStride]; there are [seqs] sequences of length [n].
+     */
+    private fun attention(a: Attn, tokens: Int, c: Int, n: Int, posStride: Int, seqStride: Int, seqs: Int) {
+        val heads = c / HEAD
+        rmsNorm(a.gamma, x, xn, tokens, c)
+        java.util.Arrays.fill(qkv, 0, tokens * 3 * c, 0f)
+        mm(xn, 0, c, c, a.qkv, 0, qkv, 0, 3 * c, 3 * c, tokens)
+        timed(4) { par.rows(tokens) { lo, hi ->
+            for (r in lo until hi) for (hh in 0 until heads) {
+                var s = a.gateB[hh]
+                for (k in 0 until c) s += xn[r * c + k] * a.gateW[k * heads + hh]
+                gates[r * heads + hh] = 1f / (1f + exp(-s))
+            }
+        } }
+        val cosT = ropeCos.getValue(n); val sinT = ropeSin.getValue(n)
+        timed(1) { par.items(seqs * heads) { worker, lo, hi ->
+            val sc = scratch[worker]
+            for (item in lo until hi) attendOne(sc, item / heads, item % heads, heads, c, n, posStride, seqStride, cosT, sinT)
+        } }
+        mm(att, 0, c, c, a.out, 0, x, 0, c, c, tokens)
+    }
+
+    private fun attendOne(
+        sc: AttnScratch, s: Int, hh: Int, heads: Int, c: Int, n: Int,
+        posStride: Int, seqStride: Int, cosT: FloatArray, sinT: FloatArray,
+    ) {
+        val q = sc.q; val kt = sc.kt; val v = sc.v; val p = sc.p; val o = sc.o
+        val scale = 1f / sqrt(HEAD.toFloat())
+        val c3 = 3 * c
+        for (i in 0 until n) {
+            val tok = s * seqStride + i * posStride
+            val qo = tok * c3 + hh * HEAD; val ko = qo + c; val vo = qo + 2 * c
+            for (j in 0 until HEAD / 2) {
+                val cs = cosT[i * HEAD / 2 + j]; val sn = sinT[i * HEAD / 2 + j]
+                val q0 = qkv[qo + 2 * j]; val q1 = qkv[qo + 2 * j + 1]
+                q[i * HEAD + 2 * j] = (q0 * cs - q1 * sn) * scale
+                q[i * HEAD + 2 * j + 1] = (q1 * cs + q0 * sn) * scale
+                val k0 = qkv[ko + 2 * j]; val k1 = qkv[ko + 2 * j + 1]
+                kt[(2 * j) * n + i] = k0 * cs - k1 * sn
+                kt[(2 * j + 1) * n + i] = k1 * cs + k0 * sn
+            }
+            System.arraycopy(qkv, vo, v, i * HEAD, HEAD)
+        }
+        for (i in 0 until n) {
+            for (j in 0 until n) p[j] = 0f
+            for (d in 0 until HEAD) {
+                val a = q[i * HEAD + d]; val ko = d * n
+                for (j in 0 until n) p[j] += a * kt[ko + j]
+            }
+            var m = Float.NEGATIVE_INFINITY
+            for (j in 0 until n) if (p[j] > m) m = p[j]
+            var sum = 0f
+            for (j in 0 until n) { val e = expf(p[j] - m); p[j] = e; sum += e }
+            for (d in 0 until HEAD) o[d] = 0f
+            for (j in 0 until n) {
+                val a = p[j]; val vo = j * HEAD
+                for (d in 0 until HEAD) o[d] += a * v[vo + d]
+            }
+            val tok = s * seqStride + i * posStride
+            val g = gates[tok * heads + hh] / sum
+            val dst = tok * c + hh * HEAD
+            for (d in 0 until HEAD) att[dst + d] = o[d] * g
+        }
+    }
+
+    // ---- the matrix kernel ---------------------------------------------------------------------
+
+    /**
+     * dst[dOff + r dStride + o] += sum_k src[sOff + r sStride + k] * w[wOff + k outDim + o]
+     * for rows r < [rows], k < [inDim], o < [outDim].
+     */
+    private fun mm(
+        src: FloatArray, sOff: Int, sStride: Int, inDim: Int, wt: FloatArray, wOff: Int,
+        dst: FloatArray, dOff: Int, dStride: Int, outDim: Int, rows: Int,
+    ) {
+        timed(0) { par.rows(rows, 4) { lo, hi ->
+            when (kernel) {
+                KERNEL_SIMPLE -> mmSimple(src, sOff, sStride, inDim, wt, wOff, dst, dOff, dStride, outDim, lo, hi)
+                KERNEL_R4 -> mmR4(src, sOff, sStride, inDim, wt, wOff, dst, dOff, dStride, outDim, lo, hi)
+                else -> mmK4(src, sOff, sStride, inDim, wt, wOff, dst, dOff, dStride, outDim, lo, hi)
+            }
+        } }
+    }
+
+    /** One row at a time, one input at a time: the textbook axpy loop. */
+    private fun mmSimple(
+        src: FloatArray, sOff: Int, sStride: Int, inDim: Int, wt: FloatArray, wOff: Int,
+        dst: FloatArray, dOff: Int, dStride: Int, outDim: Int, r0: Int, r1: Int,
+    ) {
+        for (r in r0 until r1) {
+            val s = sOff + r * sStride; val d = dOff + r * dStride
+            for (k in 0 until inDim) {
+                val a = src[s + k]; val wk = wOff + k * outDim
+                for (o in 0 until outDim) dst[d + o] += a * wt[wk + o]
+            }
+        }
+    }
+
+    /** Four rows share each weight load; outputs in tiles that stay in L1. */
+    private fun mmR4(
+        src: FloatArray, sOff: Int, sStride: Int, inDim: Int, wt: FloatArray, wOff: Int,
+        dst: FloatArray, dOff: Int, dStride: Int, outDim: Int, r0: Int, r1: Int,
+    ) {
+        var r = r0
+        while (r + 4 <= r1) {
+            val s0 = sOff + r * sStride; val s1 = s0 + sStride; val s2 = s1 + sStride; val s3 = s2 + sStride
+            val d0 = dOff + r * dStride; val d1 = d0 + dStride; val d2 = d1 + dStride; val d3 = d2 + dStride
+            var o0 = 0
+            while (o0 < outDim) {
+                val o1 = min(outDim, o0 + TILE)
+                for (k in 0 until inDim) {
+                    val a0 = src[s0 + k]; val a1 = src[s1 + k]; val a2 = src[s2 + k]; val a3 = src[s3 + k]
+                    val wk = wOff + k * outDim
+                    for (o in o0 until o1) {
+                        val wv = wt[wk + o]
+                        dst[d0 + o] += a0 * wv; dst[d1 + o] += a1 * wv; dst[d2 + o] += a2 * wv; dst[d3 + o] += a3 * wv
+                    }
+                }
+                o0 = o1
+            }
+            r += 4
+        }
+        if (r < r1) mmSimple(src, sOff, sStride, inDim, wt, wOff, dst, dOff, dStride, outDim, r, r1)
+    }
+
+    /**
+     * Four inputs per pass over a destination row (one load and store of dst per four
+     * multiply-adds), rows in blocks so the four weight rows stay in L1, outputs in tiles.
+     */
+    private fun mmK4(
+        src: FloatArray, sOff: Int, sStride: Int, inDim: Int, wt: FloatArray, wOff: Int,
+        dst: FloatArray, dOff: Int, dStride: Int, outDim: Int, r0: Int, r1: Int,
+    ) {
+        val k4 = inDim and 3.inv()
+        var o0 = 0
+        while (o0 < outDim) {
+            val o1 = min(outDim, o0 + TILE)
+            var rb = r0
+            while (rb < r1) {
+                val rbEnd = min(r1, rb + RBLOCK)
+                var k = 0
+                while (k < k4) {
+                    val w0 = wOff + k * outDim; val w1 = w0 + outDim; val w2 = w1 + outDim; val w3 = w2 + outDim
+                    for (r in rb until rbEnd) {
+                        val s = sOff + r * sStride + k; val d = dOff + r * dStride
+                        val a0 = src[s]; val a1 = src[s + 1]; val a2 = src[s + 2]; val a3 = src[s + 3]
+                        for (o in o0 until o1) dst[d + o] += a0 * wt[w0 + o] + a1 * wt[w1 + o] + a2 * wt[w2 + o] + a3 * wt[w3 + o]
+                    }
+                    k += 4
+                }
+                while (k < inDim) {
+                    val w0 = wOff + k * outDim
+                    for (r in rb until rbEnd) {
+                        val a = src[sOff + r * sStride + k]; val d = dOff + r * dStride
+                        for (o in o0 until o1) dst[d + o] += a * wt[w0 + o]
+                    }
+                    k++
+                }
+                rb = rbEnd
+            }
+            o0 = o1
+        }
+    }
+
+    fun close() = par.close()
+
+    private class AttnScratch(n: Int) {
+        val q = FloatArray(n * HEAD); val kt = FloatArray(n * HEAD); val v = FloatArray(n * HEAD)
+        val p = FloatArray(n); val o = FloatArray(HEAD)
+    }
+
+    /** A fixed pool; work is split into equal contiguous parts, the caller runs the first. */
+    class Par(val threads: Int) {
+        private val pool: ExecutorService? = if (threads > 1) Executors.newFixedThreadPool(threads - 1) { r ->
+            Thread(r).also { it.isDaemon = true }
+        } else null
+
+        inline fun rows(n: Int, align: Int = 1, crossinline body: (Int, Int) -> Unit) = items(n, align) { _, lo, hi -> body(lo, hi) }
+
+        fun items(n: Int, align: Int = 1, body: (Int, Int, Int) -> Unit) {
+            if (pool == null || n < 2 * align) { body(0, 0, n); return }
+            val chunks = (n + align - 1) / align
+            val parts = min(threads, chunks)
+            val latch = CountDownLatch(parts - 1)
+            fun lo(p: Int) = min(n, (chunks * p / parts) * align)
+            for (p in 1 until parts) pool.execute { try { body(p, lo(p), lo(p + 1)) } finally { latch.countDown() } }
+            body(0, 0, lo(1))
+            latch.await()
+        }
+
+        fun close() { pool?.shutdown() }
+    }
+
+    class Attn(val gamma: FloatArray, val qkv: FloatArray, val gateW: FloatArray, val gateB: FloatArray, val out: FloatArray)
+    class Ff(val gamma: FloatArray, val w1: FloatArray, val b1: FloatArray, val w2: FloatArray, val b2: FloatArray)
+    class Block(val attnF: Attn, val ffF: Ff, val attnT: Attn, val ffT: Ff, val convW: FloatArray, val convScale: FloatArray, val convShift: FloatArray)
+
+    class Weights(
+        val dim: Int, val bn1Scale: FloatArray, val bn1Shift: FloatArray,
+        val stemW: FloatArray, val stemScale: FloatArray, val stemShift: FloatArray,
+        val blocks: List<Block>, val linW: FloatArray, val linB: FloatArray,
+        val layers: List<Pair<Attn, Ff>>, val normGamma: FloatArray, val headW: FloatArray, val headB: FloatArray,
+    ) {
+        companion object {
+            /** "BTHS" v1: transformer width, then arrays of little-endian float32, each preceded by its length. */
+            fun read(bytes: ByteArray): Weights {
+                val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+                val magic = ByteArray(4).also { b.get(it) }
+                require(String(magic) == "BTHS" && b.int == 1) { "not a Beat This! weights file" }
+                val d = b.int
+                val count = b.int
+                var next = 0
+                fun arr(size: Int): FloatArray {
+                    require(next++ < count)
+                    val n = b.int
+                    require(n == size) { "array ${next - 1}: $n floats, expected $size" }
+                    val a = FloatArray(n)
+                    b.asFloatBuffer().get(a); b.position(b.position() + 4 * n)
+                    return a
+                }
+                fun attn(c: Int) = Attn(arr(c), arr(c * 3 * c), arr(c * (c / HEAD)), arr(c / HEAD), arr(c * c))
+                fun ff(c: Int) = Ff(arr(c), arr(c * 4 * c), arr(4 * c), arr(4 * c * c), arr(c))
+                val bn1s = arr(128); val bn1b = arr(128)
+                val stemW = arr(12 * 32); val stemS = arr(32); val stemB = arr(32)
+                val blocks = listOf(32, 64, 128).map { c ->
+                    val aF = attn(c); val fF = ff(c); val aT = attn(c); val fT = ff(c)
+                    Block(aF, fF, aT, fT, arr(6 * c * 2 * c), arr(2 * c), arr(2 * c))
+                }
+                val linW = arr(1024 * d); val linB = arr(d)
+                val layers = List(6) { attn(d) to ff(d) }
+                val w = Weights(d, bn1s, bn1b, stemW, stemS, stemB, blocks, linW, linB, layers, arr(d), arr(2 * d), arr(2))
+                require(next == count && !b.hasRemaining()) { "unexpected file length" }
+                return w
+            }
+        }
+    }
+
+    companion object {
+        const val HEAD = 32
+        const val KERNEL_SIMPLE = 0
+        const val KERNEL_R4 = 1
+        const val KERNEL_K4 = 2
+        var TILE = 512
+        var RBLOCK = 16
+        /** 0: kotlin.math.exp; 1: a polynomial exp. */
+        var EXP_MODE = 0
+        var PROFILE = false
+        val prof = LongArray(8)
+        val profNames = arrayOf("mm", "attnCore", "gelu+ff-misc", "norm", "gates", "stem/conv-misc", "head", "")
+        inline fun <T> timed(slot: Int, body: () -> T): T {
+            if (!PROFILE) return body()
+            val t0 = System.nanoTime(); val r = body(); prof[slot] += System.nanoTime() - t0; return r
+        }
+
+        fun expf(x: Float): Float = if (EXP_MODE == 0) exp(x) else fastExp(x)
+
+        /** e^x for x <= 0 (softmax after subtracting the max): 2^(x log2 e) by range reduction and a degree-5 polynomial; rel. error ~2e-7. */
+        fun fastExp(x: Float): Float {
+            val z = max(x * 1.442695041f, -126f)
+            val fi = kotlin.math.floor(z)
+            val f = z - fi
+            val p = 1f + f * (0.6931472f + f * (0.2402265f + f * (0.05550411f + f * (0.009618129f + f * (0.0013333558f + f * 0.00015403530f)))))
+            return Float.fromBits(((fi.toInt() + 127) shl 23)) * p
+        }
+
+        /** Exact (erf) GELU, erf by Abramowitz-Stegun 7.1.26 (abs. error < 1.5e-7). */
+        fun gelu(x: Float): Float {
+            val z = x * 0.70710678f
+            val az = kotlin.math.abs(z)
+            val tt = 1f / (1f + 0.3275911f * az)
+            val y = 1f - (((((1.061405429f * tt - 1.453152027f) * tt) + 1.421413741f) * tt - 0.284496736f) * tt + 0.254829592f) * tt * exp(-az * az)
+            val erf = if (z >= 0f) y else -y
+            return 0.5f * x * (1f + erf)
+        }
+    }
+}
