@@ -19,7 +19,7 @@ as `--beat-this-src`, downloaded data is only read):
 | `convert_coreml.py` | trace at a fixed length, convert to Core ML (mlprogram, iOS 17) in FP32 and FP16 |
 | `bench_speed.py` | CPU time per forward pass, per checkpoint and window |
 | `live_eval.py` | the live-use evaluation (prepare / swift / beatthis / score) |
-| `compound_proto.py` | simple-vs-compound decision from Beat This! beats with MeterDetector's check |
+| `compound_proto.py` | simple-vs-compound decision from Beat This! beats with MeterDetector's check, and how separable the evidence is |
 | `kclive/` | Swift command-line drivers on KeyCatchCore: `kclive` (MusicAnalyzer, 1024-sample chunks), `kconsets` (onset signal dump) |
 
 ## 1. Upstream code, checkpoints, licences
@@ -223,12 +223,259 @@ most of its time goes to the frequency/time attention of the front end at full f
 (shared by both sizes). Cost grows faster than linearly with W (attention is quadratic in T).
 Batching several windows was slower per window than one at a time on this CPU (measured:
 small0 batch 1/4/8: 170/215/256 ms per window, 1 thread). The log-mel front end is negligible.
-A phone CPU core is typically slower than this server core, and running once a second leaves
-a real-time budget of 1000 ms per run.
+Running once a second leaves 1000 ms per run; phone speeds were not measured (a phone core is
+usually slower than this server core). For comparison, KeyCatch's whole Swift MusicAnalyzer
+(Band preset, everything it does) took 13 ms per second of audio here (measured in `kclive`,
+4 processes in parallel).
 
 ## 5. Live evaluation
 
-RESULTS
+### Setup (what `live_eval.py` does)
+
+* **Clips.** GTZAN (held out by small0 and final0, so fair): a stratified random sample of 30
+  clips per genre (300; jazz.00054 is unreadable and has no annotation), plus every clip that
+  GTZAN-Rhythm v2 labels 3/4 (44) or ternary 12/8 / 9/8 (31); 351 clips in all, 30 s each.
+  Beats/downbeats: beat_this_annotations `gtzan` (the GTZAN-Rhythm-derived set the paper uses).
+  Ballroom: the 103 clips of the **val** part of `single.split` (27 Waltz/Viennese Waltz),
+  annotations from beat_this_annotations. GuitarSet (no drums, mono mic audio): the 27 comp
+  takes of the val part of `single.split`, and every third solo take (60 of 180, 12 per style),
+  beats from the JAMS `beat_position` annotations. All GuitarSet takes are 4/4.
+* **Who saw what.** GTZAN: no checkpoint. Ballroom val and GuitarSet comp val: seen by small0 and
+  final0 (marked **trained** in the tables), held out from single_small0 and single_final0
+  (same architecture, trained on the rest of the data). GuitarSet solo: seen by none.
+  Ballroom has been reported in the literature to contain a few duplicate recordings (not
+  checked here); if any straddle the split, the single_* Ballroom numbers are slightly optimistic.
+* **Swift (the app as it is).** `kclive` feeds 44.1 kHz mono (soxr from the files' rates) to
+  `MusicAnalyzer(sampleRate: 44100, preset:)` in 1024-sample chunks with
+  `nowNanos` = clock time of the chunk's last sample, and reads `result` after the chunk that
+  reaches each whole second from 4 s: `bpm`, `beatsPerBar`, `lastBeatAtNanos`,
+  `beatPeriodMillis`, `meterCompound`. Band preset for GTZAN and Ballroom, Guitar preset for
+  GuitarSet. The other preset gave numbers within ~3 points, except on the waltzes, where Guitar
+  did better than Band (tempo ±4 % 26.1 vs 21.7, with x2 43.1 vs 34.1). At 48 kHz (GTZAN sample,
+  Band) the numbers were the same within 1.2 points (64.7 / 81.2 / 43.6 / 74.6 vs
+  65.2 / 81.6 / 43.8 / 75.8).
+* **Beat This live.** At each moment t (every 1 s from 4 s): the newest W x 50 complete log-mel
+  frames before t (zeros before the clip starts), plus 6 zero frames on each side, one forward
+  pass, official minimal postprocessing, then the readout of section 2 (tempo from the median
+  of the last 8 intervals, last beat, beats per bar by the downbeat comb pooled over readouts).
+  No other state is carried between windows.
+* **Scores per moment.** Annotated local tempo = 60 / median interval of the annotated beats
+  within t +- 3 s; annotated bar length = beats between the downbeats around t.
+  tempo ±4 % strict; ±4 % also allowing x2 and /2; beats per bar equal; phase: next beat
+  = last + k x period (first one after now) within 70 ms of an annotated beat. A readout
+  without a value counts as wrong. Percentages are over all moments of all clips (Swift has
+  ~0.3 % more moments because its clock runs to the end of the last whole chunk).
+  "Time to first correct tempo" and "3 correct in a row" are medians over clips of the first
+  such moment (4 s is the first possible); "never" = more than half the clips never got there.
+  Offline beat/downbeat F: mir_eval F-measure, 70 ms, first 5 s trimmed (as in the paper),
+  whole-clip official inference for Beat This; for Swift, the beats the screen pulses on
+  (each new `lastBeatAtNanos` that moves forward) and those with bar position 0.
+* Sanity check: final0 offline beat F on the GTZAN sample is 90.2 and downbeat F 82.0, close to
+  the paper's GTZAN figures as I remember them (about 89 beat F1); the paper's table was not
+  re-read here, and this is a 300-clip sample, not all of GTZAN.
+
+### Results (measured)
+
+#### GTZAN (stratified random sample)
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (band) | 300 | 7796 | 65.2 | 81.6 | 43.8 | 75.8 | 4 s | 5 s | 36 | 72.8 | 12.9 |
+| Beat This small0, W=6 s | 300 | 7787 | 74.7 | 86.1 | 68.5 | 82.8 | 4 s | 4 s | 9 | 89.4 | 81.1 |
+| Beat This small0, W=8 s | 300 | 7787 | 78.1 | 88.9 | 81.1 | 85.2 | 4 s | 4 s | 9 | 89.4 | 81.1 |
+| Beat This small0, W=12 s | 300 | 7787 | 79.0 | 89.4 | 80.2 | 85.4 | 4 s | 4 s | 13 | 89.4 | 81.1 |
+| Beat This final0, W=6 s | 300 | 7787 | 78.6 | 89.4 | 74.1 | 85.0 | 4 s | 4 s | 11 | 90.2 | 82.0 |
+| Beat This final0, W=8 s | 300 | 7787 | 79.7 | 90.3 | 80.7 | 85.7 | 4 s | 4 s | 13 | 90.2 | 82.0 |
+| Beat This final0, W=12 s | 300 | 7787 | 80.3 | 90.8 | 82.4 | 86.4 | 4 s | 4 s | 15 | 90.2 | 82.0 |
+
+#### GTZAN 3/4 (all)
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (band) | 44 | 1141 | 35.5 | 41.5 | 28.8 | 47.0 | 8 s | 16 s | 9 | 46.0 | 29.3 |
+| Beat This small0, W=6 s | 44 | 1138 | 58.9 | 68.9 | 51.3 | 63.8 | 4 s | 6 s | 2 | 80.8 | 69.8 |
+| Beat This small0, W=8 s | 44 | 1138 | 62.9 | 71.1 | 58.0 | 66.3 | 5 s | 5 s | 2 | 80.8 | 69.8 |
+| Beat This small0, W=12 s | 44 | 1138 | 62.8 | 72.2 | 61.2 | 65.0 | 5 s | 6 s | 5 | 80.8 | 69.8 |
+| Beat This final0, W=6 s | 44 | 1138 | 63.7 | 72.8 | 64.2 | 65.9 | 4 s | 4 s | 1 | 81.9 | 72.5 |
+| Beat This final0, W=8 s | 44 | 1138 | 64.8 | 74.0 | 69.0 | 67.9 | 4 s | 5 s | 1 | 81.9 | 72.5 |
+| Beat This final0, W=12 s | 44 | 1138 | 66.9 | 75.6 | 71.5 | 68.5 | 4 s | 5 s | 2 | 81.9 | 72.5 |
+
+#### GTZAN 12/8 + 9/8 (all, ternary)
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (band) | 31 | 805 | 56.0 | 69.2 | 24.2 | 69.7 | 8 s | 9 s | 2 | 69.1 | 15.6 |
+| Beat This small0, W=6 s | 31 | 805 | 53.0 | 56.5 | 62.7 | 64.6 | 5 s | 5 s | 6 | 76.0 | 67.0 |
+| Beat This small0, W=8 s | 31 | 805 | 54.2 | 57.3 | 63.4 | 65.1 | 5 s | 5 s | 6 | 76.0 | 67.0 |
+| Beat This small0, W=12 s | 31 | 805 | 58.1 | 60.7 | 62.6 | 68.0 | 4 s | 5 s | 5 | 76.0 | 67.0 |
+| Beat This final0, W=6 s | 31 | 805 | 57.3 | 58.4 | 59.1 | 66.5 | 6 s | 6 s | 6 | 78.8 | 71.1 |
+| Beat This final0, W=8 s | 31 | 805 | 58.8 | 59.9 | 62.0 | 67.6 | 4 s | 5 s | 6 | 78.8 | 71.1 |
+| Beat This final0, W=12 s | 31 | 805 | 60.0 | 60.9 | 62.6 | 68.3 | 4 s | 4 s | 7 | 78.8 | 71.1 |
+
+#### Ballroom val split (all styles)
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (band) | 103 | 2682 | 54.8 | 74.5 | 31.5 | 72.9 | 6 s | 10 s | 26 | 66.5 | 22.0 |
+| Beat This small0, W=6 s **(model trained on these tracks)** | 103 | 2675 | 84.2 | 89.2 | 74.0 | 88.8 | 4 s | 4 s | 0 | 98.7 | 98.1 |
+| Beat This small0, W=8 s **(model trained on these tracks)** | 103 | 2675 | 93.5 | 95.3 | 88.4 | 93.3 | 4 s | 4 s | 0 | 98.7 | 98.1 |
+| Beat This small0, W=12 s **(model trained on these tracks)** | 103 | 2675 | 93.9 | 95.5 | 93.2 | 94.1 | 4 s | 4 s | 0 | 98.7 | 98.1 |
+| Beat This final0, W=6 s **(model trained on these tracks)** | 103 | 2675 | 92.8 | 94.7 | 90.1 | 93.6 | 4 s | 4 s | 0 | 99.0 | 98.5 |
+| Beat This final0, W=8 s **(model trained on these tracks)** | 103 | 2675 | 94.4 | 95.6 | 95.0 | 95.2 | 4 s | 4 s | 0 | 99.0 | 98.5 |
+| Beat This final0, W=12 s **(model trained on these tracks)** | 103 | 2675 | 95.2 | 95.9 | 95.9 | 95.8 | 4 s | 4 s | 0 | 99.0 | 98.5 |
+| Beat This single_small0, W=6 s | 103 | 2675 | 89.6 | 92.7 | 88.1 | 89.2 | 4 s | 4 s | 0 | 97.2 | 94.7 |
+| Beat This single_small0, W=8 s | 103 | 2675 | 91.4 | 93.7 | 90.3 | 91.0 | 4 s | 4 s | 0 | 97.2 | 94.7 |
+| Beat This single_small0, W=12 s | 103 | 2675 | 92.4 | 94.7 | 91.9 | 91.1 | 4 s | 4 s | 0 | 97.2 | 94.7 |
+| Beat This single_final0, W=6 s | 103 | 2675 | 91.2 | 95.1 | 87.3 | 91.4 | 4 s | 4 s | 1 | 98.2 | 97.1 |
+| Beat This single_final0, W=8 s | 103 | 2675 | 92.1 | 95.5 | 91.2 | 92.8 | 4 s | 4 s | 1 | 98.2 | 97.1 |
+| Beat This single_final0, W=12 s | 103 | 2675 | 92.4 | 95.3 | 92.6 | 93.7 | 4 s | 4 s | 1 | 98.2 | 97.1 |
+
+#### Ballroom val split, Waltz + Viennese Waltz
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (band) | 27 | 706 | 21.7 | 34.1 | 27.9 | 53.3 | never | never | 14 | 44.1 | 25.8 |
+| Beat This small0, W=6 s **(model trained on these tracks)** | 27 | 704 | 81.5 | 84.2 | 83.7 | 85.7 | 4 s | 4 s | 0 | 97.5 | 96.5 |
+| Beat This small0, W=8 s **(model trained on these tracks)** | 27 | 704 | 90.9 | 92.0 | 89.5 | 88.9 | 4 s | 4 s | 0 | 97.5 | 96.5 |
+| Beat This small0, W=12 s **(model trained on these tracks)** | 27 | 704 | 92.9 | 92.9 | 93.6 | 91.6 | 4 s | 4 s | 0 | 97.5 | 96.5 |
+| Beat This final0, W=6 s **(model trained on these tracks)** | 27 | 704 | 87.2 | 89.6 | 90.5 | 86.9 | 4 s | 4 s | 0 | 98.2 | 97.8 |
+| Beat This final0, W=8 s **(model trained on these tracks)** | 27 | 704 | 90.3 | 92.0 | 93.9 | 90.5 | 4 s | 4 s | 0 | 98.2 | 97.8 |
+| Beat This final0, W=12 s **(model trained on these tracks)** | 27 | 704 | 92.9 | 93.8 | 94.2 | 92.2 | 4 s | 4 s | 0 | 98.2 | 97.8 |
+| Beat This single_small0, W=6 s | 27 | 704 | 84.4 | 86.5 | 87.6 | 83.2 | 4 s | 4 s | 0 | 96.6 | 93.7 |
+| Beat This single_small0, W=8 s | 27 | 704 | 87.4 | 88.5 | 89.5 | 85.4 | 4 s | 4 s | 0 | 96.6 | 93.7 |
+| Beat This single_small0, W=12 s | 27 | 704 | 91.2 | 92.5 | 92.0 | 87.9 | 4 s | 4 s | 0 | 96.6 | 93.7 |
+| Beat This single_final0, W=6 s | 27 | 704 | 89.6 | 90.9 | 87.4 | 87.2 | 4 s | 4 s | 0 | 97.2 | 94.3 |
+| Beat This single_final0, W=8 s | 27 | 704 | 91.9 | 93.0 | 89.6 | 88.4 | 4 s | 4 s | 0 | 97.2 | 94.3 |
+| Beat This single_final0, W=12 s | 27 | 704 | 92.0 | 92.6 | 91.9 | 90.6 | 4 s | 4 s | 0 | 97.2 | 94.3 |
+
+#### GuitarSet solo (mic)
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (guitar) | 60 | 1464 | 40.2 | 52.5 | 10.1 | 39.6 | 9 s | 10 s | 9 | 40.5 | 14.1 |
+| Beat This small0, W=6 s | 60 | 1452 | 34.0 | 52.4 | 26.7 | 42.4 | 6 s | 25 s | 4 | 54.7 | 37.8 |
+| Beat This small0, W=8 s | 60 | 1452 | 37.5 | 57.1 | 51.0 | 45.2 | 6 s | 14 s | 7 | 54.7 | 37.8 |
+| Beat This small0, W=12 s | 60 | 1452 | 44.7 | 61.8 | 61.4 | 47.2 | 7 s | 13 s | 6 | 54.7 | 37.8 |
+| Beat This final0, W=6 s | 60 | 1452 | 41.4 | 56.3 | 53.1 | 48.8 | 6 s | 12 s | 2 | 61.5 | 42.9 |
+| Beat This final0, W=8 s | 60 | 1452 | 45.0 | 60.6 | 71.5 | 48.8 | 6 s | 11 s | 4 | 61.5 | 42.9 |
+| Beat This final0, W=12 s | 60 | 1452 | 44.7 | 60.1 | 77.0 | 50.7 | 8 s | 12 s | 4 | 61.5 | 42.9 |
+
+#### GuitarSet comp (val split, mic)
+
+| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (guitar) | 27 | 679 | 45.1 | 59.4 | 22.8 | 59.5 | 8 s | 8 s | 7 | 52.2 | 15.0 |
+| Beat This small0, W=6 s **(model trained on these tracks)** | 27 | 668 | 73.8 | 86.2 | 55.7 | 83.2 | 4 s | 4 s | 0 | 92.9 | 96.0 |
+| Beat This small0, W=8 s **(model trained on these tracks)** | 27 | 668 | 81.9 | 93.3 | 82.9 | 87.1 | 4 s | 4 s | 0 | 92.9 | 96.0 |
+| Beat This small0, W=12 s **(model trained on these tracks)** | 27 | 668 | 89.4 | 96.7 | 89.8 | 91.5 | 4 s | 4 s | 0 | 92.9 | 96.0 |
+| Beat This final0, W=6 s **(model trained on these tracks)** | 27 | 668 | 85.0 | 93.9 | 88.6 | 89.4 | 4 s | 4 s | 0 | 96.7 | 94.8 |
+| Beat This final0, W=8 s **(model trained on these tracks)** | 27 | 668 | 87.4 | 94.8 | 93.6 | 91.6 | 4 s | 4 s | 0 | 96.7 | 94.8 |
+| Beat This final0, W=12 s **(model trained on these tracks)** | 27 | 668 | 91.6 | 97.9 | 96.3 | 93.6 | 4 s | 4 s | 0 | 96.7 | 94.8 |
+| Beat This single_small0, W=6 s | 27 | 668 | 71.0 | 81.7 | 89.8 | 70.4 | 4 s | 4 s | 0 | 85.0 | 80.7 |
+| Beat This single_small0, W=8 s | 27 | 668 | 75.4 | 85.5 | 93.4 | 73.7 | 4 s | 4 s | 0 | 85.0 | 80.7 |
+| Beat This single_small0, W=12 s | 27 | 668 | 78.7 | 85.9 | 92.8 | 75.1 | 5 s | 5 s | 0 | 85.0 | 80.7 |
+| Beat This single_final0, W=6 s | 27 | 668 | 76.2 | 93.1 | 87.4 | 79.2 | 4 s | 4 s | 0 | 87.0 | 85.7 |
+| Beat This single_final0, W=8 s | 27 | 668 | 78.1 | 92.7 | 90.9 | 80.2 | 4 s | 4 s | 0 | 87.0 | 85.7 |
+| Beat This single_final0, W=12 s | 27 | 668 | 81.7 | 93.4 | 94.2 | 81.9 | 4 s | 4 s | 0 | 87.0 | 85.7 |
+
+#### Swift tracker: share of scored moments shown as compound (6/8, 9/8, 12/8)
+
+| group | preset | moments | compound shown |
+|---|---|---|---|
+| GTZAN (stratified random sample) | band | 7796 | 9.8% |
+| GTZAN 3/4 (all) | band | 1141 | 23.0% |
+| GTZAN 12/8 + 9/8 (all, ternary) | band | 805 | 29.7% |
+| Ballroom val split (all styles) | band | 2682 | 10.7% |
+| Ballroom val split, Waltz + Viennese Waltz | band | 706 | 23.2% |
+| GuitarSet solo (mic) | guitar | 1464 | 25.4% |
+| GuitarSet comp (val split, mic) | guitar | 679 | 29.5% |
+
+#### GTZAN random sample per genre: tempo ±4% (×2 ok) / phase
+
+| system | blues | classical | country | disco | hiphop | jazz | metal | pop | reggae | rock |
+|---|---|---|---|---|---|---|---|---|---|---|
+| KeyCatch Swift (band) | 83 / 76 | 39 / 35 | 83 / 78 | 93 / 90 | 90 / 85 | 54 / 48 | 92 / 84 | 91 / 90 | 97 / 96 | 86 / 75 |
+| Beat This small0, W=6 s | 79 / 72 | 55 / 51 | 88 / 89 | 92 / 90 | 94 / 90 | 81 / 73 | 88 / 86 | 88 / 88 | 97 / 98 | 92 / 87 |
+| Beat This small0, W=8 s | 82 / 75 | 58 / 54 | 91 / 90 | 94 / 93 | 97 / 93 | 81 / 72 | 90 / 88 | 95 / 93 | 99 / 99 | 95 / 89 |
+| Beat This small0, W=12 s | 82 / 75 | 57 / 54 | 92 / 92 | 96 / 94 | 97 / 92 | 83 / 72 | 91 / 88 | 95 / 94 | 99 / 98 | 96 / 90 |
+| Beat This final0, W=6 s | 83 / 75 | 61 / 55 | 92 / 93 | 94 / 92 | 94 / 89 | 84 / 74 | 93 / 87 | 94 / 93 | 99 / 98 | 93 / 87 |
+| Beat This final0, W=8 s | 84 / 75 | 64 / 55 | 93 / 93 | 93 / 93 | 95 / 91 | 85 / 75 | 93 / 88 | 95 / 94 | 99 / 98 | 95 / 88 |
+| Beat This final0, W=12 s | 85 / 76 | 67 / 57 | 93 / 94 | 93 / 93 | 95 / 92 | 85 / 73 | 93 / 88 | 96 / 96 | 99 / 99 | 96 / 90 |
+
+Beats-per-bar with the naive "peaks" readout instead of the comb (W 8 s, `--meter peaks`):
+GTZAN sample 60.9 (small0) / 60.7 (final0), GTZAN 3/4 47.1 / 56.0, Ballroom val (single_*)
+77.5 / 81.6, GuitarSet solo 13.6 / 13.6, GuitarSet comp val (single_*) 59.0 / 65.3. The comb
+readout only chooses between 2, 3 and 4 beats per bar, which is a small advantage on the
+all-4/4 GuitarSet compared with the Swift MeterDetector, which also considers 5, 6 and 7.
+
+### Compound metres
+
+How often it matters (read from GTZAN-Rhythm v2 `stats.csv`, all 1000 GTZAN tracks): meter 4/4
+895, 3/4 44, 12/8 27, 9/8 4, 2/4 7, 5/4 2, unlabelled 21; 31 tracks (3.1 %) are ternary (beat
+divides in three), 147 swing. Ballroom and GuitarSet carry no compound labels (all Ballroom
+styles and all GuitarSet takes are simple metres; GuitarSet jazz and Ballroom jive swing).
+In these annotations a 12/8 song has 4 beats per bar at the dotted quarter, so the
+beats-per-bar and tempo scores above count 12/8 as "4"; what KeyCatch adds is the 12/8 label.
+
+The Swift tracker shows a compound label on 9.8 % of moments in the GTZAN sample, 29.7 % on
+the ternary clips, and also on 23-30 % of moments of 3/4 waltzes and of the (simple, 4/4)
+GuitarSet takes: its compound decision is weak today. Prototype of keeping it with Beat This
+(`compound_proto.py`: MeterDetector.isCompound ported line for line, run on KeyCatchCore's own
+onset signal, with the Beat This beat period and newest beat at each moment; GTZAN):
+
+GTZAN: 31 ternary clips (12/8, 9/8), 289 non-ternary clips of the random sample
+
+| compound decision from | share of moments called compound: ternary clips | non-ternary clips | clips called compound by majority of moments: ternary | non-ternary |
+|---|---|---|---|---|
+| KeyCatch Swift (band), MeterDetector as shipped | 29.9% | 9.3% | 8/31 | 15/289 |
+| isCompound on Beat This small0 beats, W=8 s | 19.1% | 8.5% | 2/31 | 0/289 |
+| isCompound on Beat This final0 beats, W=8 s | 20.1% | 9.0% | 2/31 | 0/289 |
+| same, energies pooled over readouts (x0.9 per s), small0 | 18.1% | 6.4% | 2/31 | 9/289 |
+| same, energies pooled over readouts (x0.9 per s), final0 | 18.7% | 7.0% | 4/31 | 12/289 |
+
+Measured separability of the underlying evidence (energy at both thirds vs halfway, pooled over
+a whole clip, final0/small0 beats): clip-level AUC 0.81 for ternary vs other, but at a
+threshold with <= 5 % false alarms only 10-23 % of ternary clips are found. So reusing
+MeterDetector's subdivision check on Beat This beats works mechanically but is no better at telling 12/8 from 4/4 swing than the
+check is today. Proposal: keep the 6/8-12/8 decision outside the network, computed on the
+Beat This beat grid from the onset signal the app already has, pooled over many beats (tens of
+seconds) and with hysteresis before the label switches; and treat it as a separate, slower
+"feel" decision that never changes the beat count. If better accuracy is wanted, the next step
+is a tiny classifier on per-beat subdivision profiles (onset energy at 1/4, 1/3, 1/2, 2/3, 3/4
+of each beat), trained on GTZAN-Rhythm's ternary/swing labels with clips held out, or reading
+the Beat This beat activation between beats; neither was tried here.
+
+## 6. Recommendation
+
+**Window: W = 8 s.** Going from 6 to 8 s helps everywhere and a lot for the bar
+(GTZAN sample, beats per bar: small0 68.5 -> 81.1, final0 74.1 -> 80.7; tempo +1 to +3 points).
+12 s adds at most ~1-2 points on GTZAN and Ballroom (more on GuitarSet solo, e.g. small0 bar
+51 -> 61), costs 2x the compute of 8 s (attention is quadratic) and reacts more slowly to
+tempo changes, which these steady 30 s clips do not test. A 12 s window is worth trying only
+for the Guitar preset, if the CPU budget allows.
+
+**Checkpoint.** On drummed music the two are almost equal: GTZAN sample at W 8 s, small0 vs
+final0: tempo 78.1 vs 79.7, tempo with x2 88.9 vs 90.3, bar 81.1 vs 80.7, phase 85.2 vs 85.7;
+Ballroom val (single_small0 vs single_final0) 91.4 vs 92.1, 90.3 vs 91.2, 91.0 vs 92.8.
+Without drums the big model is clearly better: GuitarSet solo (unseen by both) tempo 37.5 vs
+45.0, bar 51.0 vs 71.5, phase 45.2 vs 48.8; GuitarSet comp val (single_*) tempo 75.4 vs 78.1,
+x2-tempo 85.5 vs 92.7, phase 73.7 vs 80.2; GTZAN 3/4 bar 58.0 vs 69.0. Costs: small0 2.1 M
+parameters, 4.5 MB as FP16 Core ML / 8.5 MB FP32, 176 ms per 8 s window on one core here;
+final0 20.3 M, 40.9 MB / 81.4 MB, 305 ms (99 ms on 4 threads).
+So: **small0 with W = 8 s as the default for both apps** (Android on the CPU: about a fifth of
+a core here at one run per second; iPhone: 4.5 MB). **final0 is the upgrade for the Guitar
+preset**, where it is clearly better, if 41 MB (FP16) and roughly 2x the CPU are acceptable,
+e.g. on iPhone through Core ML. Either way Beat This beats the current tracker by a wide
+margin on everything except the drumless solo-guitar tempo (small0 37.5 vs Swift 40.2 strict)
+and the x2-tolerant tempo on 12/8 songs (Swift 69.2 vs Beat This 57-61: Beat This more often
+locks to a level 3/2 or 3x off the annotated dotted-quarter beat). The bar count is where the
+gain is largest (GTZAN 43.8 -> ~81 %, waltzes 28 -> ~90 %).
+
+Before shipping: run the .mlpackage on a Mac/iPhone against these logits (FP16 checked only
+by a stand-in), keep the FP16-safe RMSNorm, port `frontend_np.py` (float32 is enough) and the
+readout (tempo median, comb meter, phase extrapolation), and keep a compound/"feel" decision
+outside the network as proposed above. Not measured here: phone speeds, behaviour on tempo
+changes and live microphone audio (room, phone mic, AGC).
 
 ## Reproducing
 
@@ -243,6 +490,12 @@ for m in small0 final0 single_small0 single_final0; do
 # GTZAN-Rhythm v2 (meter, ternary, swing): http://anasynth.ircam.fr/home/system/files/attachment_uploads/marchand/private/GTZAN-Rhythm_v2_ismir2015_lbd_2015-10-28.tar_.gz
 # Ballroom audio: https://mtg.upf.edu/ismir2004/contest/tempoContest/data1.tar.gz
 # GuitarSet: https://zenodo.org/records/3371780 (annotation.zip, audio_mono-mic.zip)
+# sha256 of what was used: genres.tar.gz b28cc067ff6199bd826f5d1a6931458586d64acae7f44b2e882b7a97af057531,
+#   GTZAN-Rhythm v2 a5f8b910f5dd16937352d4a40e0652e4f689b3fea5ed33f845a465f719868c96,
+#   data1.tar.gz e2f85f5ac230523498ca3b9addf225de19f1d4d1cb7d8724a40bc0044b7c5947,
+#   annotation.zip 8daa02e6417ccca1685feb44b135e95928ad7037e5032ecb326b5791856fda99 (md5 matches Zenodo),
+#   audio_mono-mic.zip 237cdc58353d25c3c9683f4565a0f1cf2db30a9051abca545a919f8f1296dc28 (md5 matches Zenodo);
+#   beat_this_annotations at fd9fcc0896cb78730bae735102c8753ef3a3badd (main, v1.1 annotations)
 
 $V -I inspect_checkpoints.py --beat-this-src $S/dl/beat_this_src $S/dl/ckpt/*.ckpt
 $V -I frontend_np.py --beat-this-src $S/dl/beat_this_src <some .wav files>
@@ -260,7 +513,10 @@ $V -I live_eval.py --work $E prepare --gtzan-audio .../genres --gtzan-ann $S/dl/
 $V -I live_eval.py --work $E swift --kclive $S/kc-beat/release/kclive
 $V -I live_eval.py --work $E beatthis --beat-this-src $S/dl/beat_this_src --ckpt small0=... final0=...
 $V -I live_eval.py --work $E beatthis --beat-this-src $S/dl/beat_this_src --ckpt single_small0=... single_final0=... --datasets ballroom guitarset_comp
-$V -I live_eval.py --work $E score [--meter peaks]
+$V -I live_eval.py --work $E beatthis --beat-this-src $S/dl/beat_this_src --ckpt small0=... final0=... --datasets guitarset_solo ballroom guitarset_comp
+$V -I live_eval.py --work $E score --ckpts small0 final0 single_small0 single_final0 [--meter peaks]
+# every step skips clips whose result file exists (written atomically), so a killed run can be restarted;
+# about 48 s of one CPU core per clip for small0+final0 at W 6, 8, 12 s.
 # compound check: dump onsets with kconsets (list lines: <clip_44100.f32> <out.f32> 44100 band) into $E/onsets, then
 $V -I compound_proto.py --work $E
 ```

@@ -448,7 +448,13 @@ def score_clip(truth, readouts):
             phase=truth.phase_ok(now, last, period), compound=compound, answered=bpm is not None))
         if ts and first is None:
             first = m
-    return rows, first
+    # settled: first moment that starts a run of 3 consecutive strictly correct readouts
+    settled = None
+    for k in range(len(rows) - 2):
+        if all(rows[k + j]["tempo_strict"] for j in range(3)):
+            settled = rows[k]["m"]
+            break
+    return rows, (first, settled)
 
 
 def shown_pulses(shown):
@@ -479,28 +485,31 @@ def summarize(name, clip_rows, firsts, fs, dfs):
     def pct(k):
         return 100.0 * sum(r[k] for r in allrows) / n
 
-    fvals = sorted(firsts.values(), key=lambda v: np.inf if v is None else v)
+    fvals = [v[0] for v in firsts.values()]
+    svals = [v[1] for v in firsts.values()]
     found = [v for v in fvals if v is not None]
     never = sum(1 for v in fvals if v is None)
     med = np.median([np.inf if v is None else v for v in fvals]) if fvals else None
+    smed = np.median([np.inf if v is None else v for v in svals]) if svals else None
     return dict(name=name, clips=len(clip_rows), moments=n, tempo_strict=pct("tempo_strict"),
                 tempo_octave=pct("tempo_octave"), bpb=pct("bpb"), phase=pct("phase"),
-                ttf_median=med, never=never, found=len(found),
+                ttf_median=med, never=never, found=len(found), settled_median=smed,
                 f=100.0 * np.mean([v for v in fs if v is not None]) if fs else None,
                 df=100.0 * np.mean([v for v in dfs if v is not None]) if dfs else None)
 
 
 def fmt(s):
     ttf = "never" if s["ttf_median"] is None or not np.isfinite(s["ttf_median"]) else f"{s['ttf_median']:.0f} s"
+    st = "never" if s["settled_median"] is None or not np.isfinite(s["settled_median"]) else f"{s['settled_median']:.0f} s"
     f = "" if s["f"] is None else f"{s['f']:.1f}"
     df = "" if s["df"] is None else f"{s['df']:.1f}"
     return (f"| {s['name']} | {s['clips']} | {s['moments']} | {s['tempo_strict']:.1f} | {s['tempo_octave']:.1f} | "
-            f"{s['bpb']:.1f} | {s['phase']:.1f} | {ttf} | {s['never']} | {f} | {df} |")
+            f"{s['bpb']:.1f} | {s['phase']:.1f} | {ttf} | {st} | {s['never']} | {f} | {df} |")
 
 
 HEADER = ("| system | clips | moments | tempo ±4% | tempo ±4% (×2, ÷2 ok) | beats/bar | phase ±70 ms | "
-          "median time to 1st correct tempo | clips never correct | offline beat F | offline downbeat F |\n"
-          "|---|---|---|---|---|---|---|---|---|---|---|")
+          "median time to 1st correct tempo | median time to 3 correct in a row | clips never correct | offline beat F | offline downbeat F |\n"
+          "|---|---|---|---|---|---|---|---|---|---|---|---|")
 
 
 def score(a):
