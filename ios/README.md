@@ -9,7 +9,7 @@ The iPhone version of KeyCatch. It needs iOS 17 or newer.
   packages:
   - `CrepeTiny.mlpackage` is built from the same weights as the Android app by
     `tools/coreml/crepe_coreml.py`.
-  - `BasicPitch.mlpackage` is Spotify's own Core ML release of Basic Pitch.
+  - `BasicPitchNotes.mlpackage` is Spotify's own Core ML release of Basic Pitch.
 
   The app compiles each one on the phone the first time it runs, and keeps the result.
 - `KeyCatch/` is the SwiftUI app. It has the same screens, wording and colours as the Android

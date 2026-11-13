@@ -9,7 +9,7 @@ let package = Package(
     products: [.library(name: "KeyCatchCore", targets: ["KeyCatchCore"])],
     targets: [
         // The models are copied as they are and compiled on the device the first time they are used.
-        .target(name: "KeyCatchCore", resources: [.copy("Resources/CrepeTiny.mlpackage"), .copy("Resources/BasicPitch.mlpackage")]),
+        .target(name: "KeyCatchCore", resources: [.copy("Resources/CrepeTiny.mlpackage"), .copy("Resources/BasicPitchNotes.mlpackage")]),
         .testTarget(name: "KeyCatchCoreTests", dependencies: ["KeyCatchCore"], resources: [.copy("Resources")]),
     ]
 )

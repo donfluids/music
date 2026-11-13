@@ -8,7 +8,9 @@ import Foundation
 public enum KeyCatchModels {
     public enum Failure: Error { case missing(String), unexpectedOutput(String) }
 
-    /// The compiled model for `name` ("CrepeTiny" or "BasicPitch").
+    /// The compiled model for `name` ("CrepeTiny" or "BasicPitchNotes"). Xcode generates a Swift
+    /// class named after each model package, so a package must not share its name with a source
+    /// file or type of the engine (hence not "BasicPitch", which BasicPitch.swift already is).
     public static func load(_ name: String, computeUnits: MLComputeUnits = .all) throws -> MLModel {
         let compiled = try compiledURL(name)
         let config = MLModelConfiguration()
@@ -118,7 +120,7 @@ public final class CoreMLBasicPitch: NoteNetwork {
         input = try MLMultiArray(shape: [1, NSNumber(value: BasicPitch.WINDOW), 1], dataType: .float32)
     }
 
-    public convenience init() throws { try self.init(model: KeyCatchModels.load("BasicPitch")) }
+    public convenience init() throws { try self.init(model: KeyCatchModels.load("BasicPitchNotes")) }
 
     /// All outputs for one window, keyed by name, each flattened row-major.
     public func outputs(window: [Float]) -> [String: [Float]] {

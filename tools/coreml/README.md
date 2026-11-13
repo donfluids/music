@@ -1,6 +1,6 @@
 # Core ML models for the iPhone app
 
-- `BasicPitch.mlpackage` is Spotify's own Core ML export of Basic Pitch
+- `BasicPitchNotes.mlpackage` is Spotify's own Core ML export of Basic Pitch
   (`basic_pitch/saved_models/icassp_2022/nmp.mlpackage` in github.com/spotify/basic-pitch, Apache 2.0),
   copied unchanged.
 - `CrepeTiny.mlpackage` is built from the same CREPE-tiny weights the Android app ships

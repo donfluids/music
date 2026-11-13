@@ -106,7 +106,7 @@ final class AppModel {
         }
         Task.detached(priority: .utility) {
             let crepe = try? KeyCatchModels.load("CrepeTiny")
-            let basicPitch = try? KeyCatchModels.load("BasicPitch")
+            let basicPitch = try? KeyCatchModels.load("BasicPitchNotes")
             await MainActor.run {
                 self.crepeModel = crepe
                 self.basicPitchModel = basicPitch
