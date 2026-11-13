@@ -30,7 +30,7 @@ import com.donfluids.music.R
 import com.donfluids.music.music.NoteNaming
 import com.donfluids.music.ui.theme.Tabular
 
-/** The tuning reference, note names, chord names or numbers, how notes are heard, and the theme. Each is saved as soon as it changes. */
+/** The tuning reference, note names, chord names or numbers, how notes and the beat are heard, and the theme. Each is saved as soon as it changes. */
 @Composable
 fun SettingsDialog(
     referenceHz: Int,
@@ -38,11 +38,13 @@ fun SettingsDialog(
     nashville: Boolean,
     crepe: Boolean,
     basicPitch: Boolean,
+    beatThis: Boolean,
     onReference: (Int) -> Unit,
     onNaming: (NoteNaming) -> Unit,
     onNashville: (Boolean) -> Unit,
     onCrepe: (Boolean) -> Unit,
     onBasicPitch: (Boolean) -> Unit,
+    onBeatThis: (Boolean) -> Unit,
     /** Dark, light, or null to follow the system. */
     theme: Boolean?,
     onTheme: (Boolean?) -> Unit,
@@ -95,6 +97,15 @@ fun SettingsDialog(
                     onSelect = onBasicPitch,
                 )
                 Text(stringResource(R.string.settings_notes_help), style = MaterialTheme.typography.bodySmall, color = muted)
+
+                Text(stringResource(R.string.settings_beat), style = MaterialTheme.typography.labelLarge)
+                TwoWay(
+                    first = stringResource(R.string.beat_standard),
+                    second = stringResource(R.string.beat_beat_this),
+                    secondSelected = beatThis,
+                    onSelect = onBeatThis,
+                )
+                Text(stringResource(R.string.settings_beat_help), style = MaterialTheme.typography.bodySmall, color = muted)
 
                 Text(stringResource(R.string.settings_pitch), style = MaterialTheme.typography.labelLarge)
                 TwoWay(

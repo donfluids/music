@@ -252,7 +252,8 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
+                // The Details screenshot shows the open fold, at the bottom of the page.
+                .verticalScroll(rememberScrollState(if (ScreenshotHooks.detailsOpen) Int.MAX_VALUE else 0))
                 .padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(SECTION_GAP),
         ) {
@@ -291,11 +292,13 @@ fun AnalyzerScreen(viewModel: AnalyzerViewModel) {
             nashville = state.nashville,
             crepe = state.crepe,
             basicPitch = state.basicPitch,
+            beatThis = state.beatThis,
             onReference = viewModel::setReferenceHz,
             onNaming = viewModel::setNaming,
             onNashville = viewModel::setNashville,
             onCrepe = viewModel::setCrepe,
             onBasicPitch = viewModel::setBasicPitch,
+            onBeatThis = viewModel::setBeatThis,
             theme = state.darkTheme,
             onTheme = viewModel::setTheme,
             onDone = { viewModel.showSettings(false) },
@@ -1048,9 +1051,9 @@ private fun ChordTimeline(a: AnalysisResult, sh: Shown) {
 @Composable
 private fun Details(a: AnalysisResult, sh: Shown) {
     val ref = sh.referenceHz
-    var open by rememberSaveable { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(ScreenshotHooks.detailsOpen) }
     // A long press on the heading adds the raw timings, for testing on a new phone.
-    var timings by rememberSaveable { mutableStateOf(false) }
+    var timings by rememberSaveable { mutableStateOf(ScreenshotHooks.detailsOpen) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val openState = stringResource(R.string.details_expanded)
     val closedState = stringResource(R.string.details_collapsed)
@@ -1100,26 +1103,38 @@ private fun Details(a: AnalysisResult, sh: Shown) {
                 }
                 DetailRow(stringResource(R.string.notes_heard)) { ChromaBars(a.chroma, sh.key?.transposed(-sh.transpose), sh.naming) }
                 // The learned models' cost as a share of real time: CREPE runs once per chroma
-                // frame (about 46 ms of audio), Basic Pitch reports milliseconds per second.
+                // frame (about 46 ms of audio), Basic Pitch and Beat This! report milliseconds per second.
                 val loads = buildList {
                     a.pitchModel?.takeIf { it != "autocorrelation" }?.let { add(it to a.pitchMillis / FRAME_MILLIS) }
                     a.notesModel?.let { add(it to a.notesMillisPerSecond / 1000f) }
+                    a.beatModel?.let { add(it to a.beatMillisPerSecond / 1000f) }
                 }
-                if (loads.isNotEmpty()) {
+                if (loads.isNotEmpty() || a.beatTooSlow) {
                     DetailRow(stringResource(R.string.phone_load)) {
-                        val worst = loads.maxOf { it.second }
-                        Text(
-                            stringResource(
-                                when {
-                                    worst < 0.35f -> R.string.phone_load_light
-                                    worst < 0.75f -> R.string.phone_load_busy
-                                    else -> R.string.phone_load_behind
-                                },
-                            ),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+                        if (loads.isNotEmpty()) {
+                            val worst = loads.maxOf { it.second }
+                            Text(
+                                stringResource(
+                                    when {
+                                        worst < 0.35f -> R.string.phone_load_light
+                                        worst < 0.75f -> R.string.phone_load_busy
+                                        else -> R.string.phone_load_behind
+                                    },
+                                ),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                        // Beat This! was too slow even at one window every two seconds.
+                        if (a.beatTooSlow) Text(stringResource(R.string.phone_load_beat_too_slow), style = MaterialTheme.typography.bodyLarge)
                         if (timings) loads.forEach { (model, share) ->
-                            Text(stringResource(R.string.phone_load_dev, model, share * 100f), style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = Tabular), color = muted)
+                            // Beat This! on a slow phone runs a window every two seconds.
+                            val every = if (model == a.beatModel && a.beatEverySeconds > 1) a.beatEverySeconds else 0
+                            Text(
+                                if (every > 0) stringResource(R.string.phone_load_dev_every, model, share * 100f, every)
+                                else stringResource(R.string.phone_load_dev, model, share * 100f),
+                                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = Tabular),
+                                color = muted,
+                            )
                         }
                     }
                 }
@@ -1206,6 +1221,12 @@ private fun ClipNoticeDialog(onAccept: () -> Unit, onDismiss: () -> Unit) {
 
 /** Audio per CREPE frame, in milliseconds: four hops of 512 samples at 44.1 kHz. */
 private const val FRAME_MILLIS = 46f
+
+/** For the screenshot tests only (as the iPhone's Screenshots.detailsOpen). */
+internal object ScreenshotHooks {
+    /** The Details fold starts open with the raw timings, and the page scrolled to the bottom. */
+    @Volatile var detailsOpen = false
+}
 
 /** Rounded rectangles for the large buttons and the segmented choices, rather than pills. */
 internal val BAR_SHAPE = RoundedCornerShape(16.dp)
