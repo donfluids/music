@@ -94,7 +94,10 @@ struct AnalyzerScreen: View {
             ToolbarItem(placement: .topBarLeading) {
                 Text(verbatim: "KeyCatch").font(AppFont.titleLarge).foregroundStyle(p.onBackground)
             }
-            ToolbarItem(placement: .principal) { EmptyView() }
+            // The name sits on the left, as on Android; the navigation title is kept only so the
+            // back button on the other screens reads "KeyCatch". An empty view here is dropped,
+            // so a blank one stands in for the centred title.
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // Before the first Listen the start screen offers the modes itself.
                 if !idle { PresetMenu() }
@@ -682,13 +685,13 @@ private struct ChordsInKey: View {
         let names = chords.enumerated().map { i, c in sh.nashville ? "\(i + 1)\(c.quality.suffix)" : sh.naming.of(c.name) }
         // One size for the whole row, set by its longest name, so the cells never differ.
         let longest = names.map(\.count).max() ?? 1
-        let size: CGFloat = longest <= 2 ? 22 : (longest == 3 ? 19 : (longest == 4 ? 16 : 14))
+        let size: CGFloat = longest <= 2 ? 22 : (longest == 3 ? 17 : (longest == 4 ? 14 : 12))
         HStack(spacing: 6) {
             ForEach(chords.indices, id: \.self) { i in
                 let chord = chords[i]
                 let playing = sh.chord.map { $0.root == key.scale[i] && $0.minor == (chord.quality == .minor) } ?? false
                 VStack(spacing: 2) {
-                    Text(names[i]).font(AppFont.manrope(size, .semibold, relativeTo: .title3))
+                    Text(names[i]).font(AppFont.manrope(size, .semibold, relativeTo: .title3)).padding(.horizontal, 1)
                         .foregroundStyle(playing ? p.onPrimaryContainer : p.onBackground)
                         .lineLimit(1).minimumScaleFactor(0.5).frame(height: 30)
                     Text(chord.numeral).font(AppFont.labelSmall).foregroundStyle(p.onSurfaceVariant)
