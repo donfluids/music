@@ -10,5 +10,8 @@ let package = Package(
     name: "kclive",
     platforms: [.macOS(.v14)],
     dependencies: [.package(path: core)],
-    targets: [.executableTarget(name: "kclive", dependencies: [.product(name: "KeyCatchCore", package: "KeyCatchCore")])]
+    targets: [
+        .executableTarget(name: "kclive", dependencies: [.product(name: "KeyCatchCore", package: "KeyCatchCore")]),
+        .executableTarget(name: "kconsets", dependencies: [.product(name: "KeyCatchCore", package: "KeyCatchCore")]),
+    ]
 )

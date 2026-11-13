@@ -252,6 +252,41 @@ def bt_readout(beats, downbeats, now, prev_bpb, n_ibi=8):
     return bpm, bpb, last, period
 
 
+def bt_readouts(live, meter="comb", decay=0.5):
+    """Turns the stored per-moment Beat This! output into app readouts.
+
+    tempo: 60 / median of the last 8 inter-beat intervals (needs 3 beats);
+    last beat: newest picked beat; period: that median interval.
+    meter "peaks": bar lengths between the official (snapped) downbeats, most common one,
+      the last answer kept when a window holds no complete bar.
+    meter "comb": for 2, 3 and 4 beats per bar and every phase, contrast of the mean downbeat
+      probability on the bar grid against the other beats; scores decay by `decay` per
+      readout so a few windows are pooled; the best bar length wins.
+    """
+    out = []
+    prev_bpb = None
+    acc = {2: 0.0, 3: 0.0, 4: 0.0}
+    for x in live:
+        now = x["t"]
+        bpm, bpb_peaks, last, period = bt_readout(x["b"], x["d"], now, prev_bpb)
+        prev_bpb = bpb_peaks
+        bpb = bpb_peaks
+        if meter == "comb":
+            q = 1.0 / (1.0 + np.exp(-np.asarray(x["dp"], float)))
+            for bb in acc:
+                acc[bb] *= decay
+                if len(q) >= 2 * bb:
+                    best = -1.0
+                    idx = np.arange(len(q))
+                    for ph in range(bb):
+                        on = (idx - ph) % bb == 0
+                        best = max(best, q[on].mean() - q[~on].mean())
+                    acc[bb] += best
+            bpb = max(acc, key=acc.get) if any(v != 0.0 for v in acc.values()) else None
+        out.append((now, now, bpm, bpb, last, period, None))
+    return out
+
+
 _W = {}
 
 
@@ -268,14 +303,14 @@ def _bt_worker_init(src, ckpts, threads):
 def _bt_one(job):
     import torch
     from frontend_np import logmel
-    it, names, windows, work, batch = job
+    it, names, windows, work, batch, right_pad, tag = job
     x = load_audio(it["audio"], 22050)
     spect = logmel(x)
     duration = len(x) / 22050
     moments = moments_for(duration)
     out_all = {}
     for name in names:
-        out_path = os.path.join(work, "bt", name, it["id"] + ".json")
+        out_path = os.path.join(work, "bt", name + tag, it["id"] + ".json")
         if os.path.exists(out_path):
             continue
         model = _W["models"][name]
@@ -295,7 +330,7 @@ def _bt_one(job):
                     # newest frame whose 1024-sample window is complete at time m
                     last = int(np.floor((m * 22050 - 512) / 441))
                     s0 = last - n + 1
-                    win = np.zeros((n + 2 * BORDER, 128), np.float32)
+                    win = np.zeros((n + BORDER + right_pad, 128), np.float32)
                     lo = max(0, s0)
                     win[BORDER + (lo - s0): BORDER + n] = spect[lo: last + 1]
                     wins.append(win)
@@ -304,20 +339,18 @@ def _bt_one(job):
                 bl, dl = [], []
                 for k in range(0, len(wins), batch):
                     o = model(wins[k: k + batch])
-                    bl.append(o["beat"][:, BORDER:-BORDER])
-                    dl.append(o["downbeat"][:, BORDER:-BORDER])
+                    bl.append(o["beat"][:, BORDER: BORDER + n])
+                    dl.append(o["downbeat"][:, BORDER: BORDER + n])
                 bl = torch.cat(bl)
                 dl = torch.cat(dl)
                 pb, pd = _W["post"](bl, dl)
                 live = []
-                prev_bpb = None
-                for m, s0, b, d in zip(moments, starts, pb, pd):
-                    bt = [float(v) + s0 / FPS for v in b]
-                    db = [float(v) + s0 / FPS for v in d]
-                    bpm, bpb, lastb, period = bt_readout(bt, db, m, prev_bpb)
-                    prev_bpb = bpb
-                    live.append(dict(t=m, bpm=bpm, bpb=bpb, last=lastb, period=period,
-                                     beats=[round(v, 3) for v in bt[-12:]]))
+                for k, (m, s0, b, d) in enumerate(zip(moments, starts, pb, pd)):
+                    # downbeat logit at each picked beat (max within +-1 frame), for meter readouts
+                    dlk = dl[k].numpy()
+                    dp = [float(dlk[max(0, int(round(v * FPS)) - 1): int(round(v * FPS)) + 2].max()) for v in b]
+                    live.append(dict(t=m, s0=s0, b=[round(float(v) + s0 / FPS, 4) for v in b],
+                                     d=[round(float(v) + s0 / FPS, 4) for v in d], dp=[round(v, 3) for v in dp]))
                 res[f"live_{w:g}"] = live
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         json.dump(res, open(out_path, "w"))
@@ -330,13 +363,15 @@ def run_beatthis(a):
     items = load_items(a.work)
     if a.datasets:
         items = [i for i in items if i["dataset"] in a.datasets]
+    if a.limit:
+        items = items[:: max(1, len(items) // a.limit)][: a.limit]
     ckpts = [tuple(c.split("=", 1)) for c in a.ckpt]
     names = [c[0] for c in ckpts]
     jobs = []
     for it in items:
-        todo = [n for n in names if not os.path.exists(os.path.join(a.work, "bt", n, it["id"] + ".json"))]
+        todo = [n for n in names if not os.path.exists(os.path.join(a.work, "bt", n + a.tag, it["id"] + ".json"))]
         if todo:
-            jobs.append((it, todo, a.windows, a.work, a.batch))
+            jobs.append((it, todo, a.windows, a.work, a.batch, a.right_pad, a.tag))
     print(f"beatthis: {len(jobs)} clips to run with {names}", flush=True)
     ctx = mp.get_context("fork")
     with ctx.Pool(a.jobs, initializer=_bt_worker_init, initargs=(a.beat_this_src, ckpts, a.threads)) as pool:
@@ -397,7 +432,7 @@ def score_clip(truth, readouts):
     first = None
     for m, now, bpm, bpb, last, period, compound in readouts:
         ref = truth.tempo(m)
-        if ref is None or not truth.has_next(now):
+        if ref is None or not truth.has_next(m):
             continue
         ts = tempo_ok(bpm, ref, False)
         rows.append(dict(
@@ -524,7 +559,7 @@ def score(a):
                     if live is None:
                         missing += 1
                         continue
-                    ro = [(x["t"], x["t"], x["bpm"], x["bpb"], x["last"], x["period"], None) for x in live]
+                    ro = bt_readouts(live, a.meter)
                     f = offline_f(truth.beats, d["offline_beats"])
                     df = offline_f(truth.down, d["offline_downbeats"]) if len(truth.down) else None
                 rows, first = score_clip(truth, ro)
@@ -601,13 +636,17 @@ def main():
     p.add_argument("--datasets", nargs="*")
     p.add_argument("--jobs", type=int, default=4)
     p.add_argument("--threads", type=int, default=1)
-    p.add_argument("--batch", type=int, default=8)
+    p.add_argument("--right-pad", type=int, default=BORDER, help="zero frames after the newest frame (official: 6)")
+    p.add_argument("--tag", default="", help="suffix for the output folder, for variants")
+    p.add_argument("--limit", type=int, default=0, help="only the first N clips (after --datasets)")
+    p.add_argument("--batch", type=int, default=1, help="windows per forward pass; 1 was fastest on this CPU")
     p = sub.add_parser("score")
     p.add_argument("--presets", nargs="+", default=["band", "guitar"])
     p.add_argument("--ckpts", nargs="+", default=["small0", "final0"])
     p.add_argument("--windows", nargs="+", type=float, default=[6, 8, 12])
     p.add_argument("--preset-for", action="store_true", default=True, help="Band for GTZAN/Ballroom, Guitar for GuitarSet")
     p.add_argument("--all-presets", action="store_true")
+    p.add_argument("--meter", default="comb", choices=["comb", "peaks"], help="Beat This! beats-per-bar readout")
     a = ap.parse_args()
     {"prepare": prepare, "swift": run_swift, "beatthis": run_beatthis, "score": score}[a.cmd](a)
 
