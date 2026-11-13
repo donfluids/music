@@ -16,7 +16,7 @@ struct LimitsScreen: View {
                 Item(lead: S.limitsMajorMinorLead, body: S.limitsMajorMinor)
                 Item(lead: S.limitsRoomLead, body: S.limitsRoom)
                 Item(lead: S.limitsOneKeyLead, body: S.limitsOneKey)
-                Item(lead: S.limitsBeatLead, body: S.limitsBeatWithModel)
+                Item(lead: S.limitsBeatLead, body: S.limitsBeat)
                 Item(lead: S.limitsVoicesLead, body: S.limitsVoices)
 
                 Heading(S.limitsNotesHeading)
@@ -29,7 +29,7 @@ struct LimitsScreen: View {
                 Text(S.limitsClosing).font(AppFont.bodyLarge).foregroundStyle(p.onBackground)
                 Text(S.limitsPrivacy).font(AppFont.bodyMedium).foregroundStyle(p.onSurfaceVariant)
                 Heading(S.limitsThanksHeading)
-                Text(S.limitsThanksWithBeat).font(AppFont.bodyMedium).foregroundStyle(p.onSurfaceVariant)
+                Text(S.limitsThanks).font(AppFont.bodyMedium).foregroundStyle(p.onSurfaceVariant)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)

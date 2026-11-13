@@ -11,7 +11,7 @@ lines = ['// Generated from app/src/main/res/values/strings.xml by tools/ios/str
          '', 'enum S {']
 # Where the iPhone app must say something different from Android.
 OVERRIDES = {
-    'limits_thanks': "KeyCatch hears notes with two open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT License), and Basic Pitch, by Spotify\\'s Audio Intelligence Lab (Apache 2.0). Both run on your iPhone through Core ML. Text is set in Manrope (SIL Open Font License). Their licenses ship with the app.",
+    'limits_thanks': "KeyCatch listens with three open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT License), Basic Pitch, by Spotify\\'s Audio Intelligence Lab (Apache 2.0), and Beat This!, by Francesco Foscarin, Jan Schlüter and Gerhard Widmer (MIT License). All three run on your iPhone through Core ML. Text is set in Manrope (SIL Open Font License). Their licenses ship with the app.",
     'permission_denied': "KeyCatch can\\'t hear without the microphone. Turn it on for KeyCatch in Settings, under Privacy & Security, Microphone.",
     'share_clips': "Share clips",
 }
