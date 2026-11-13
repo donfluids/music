@@ -86,6 +86,8 @@ struct AnalyzerScreen: View {
             .padding(.bottom, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // The Details screenshot shows the open fold, at the bottom of the page.
+        .defaultScrollAnchor(Screenshots.detailsOpen ? .bottom : nil)
         .background(p.background)
         .safeAreaInset(edge: .bottom) { BottomBar(sh: sh) }
         .navigationTitle("KeyCatch")
