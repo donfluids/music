@@ -1,0 +1,57 @@
+# Builds and tests the iPhone app on a Mac, since KeyCatch is developed without one.
+# - The engine package's tests, including the Core ML checks that only run on Apple systems
+#   (both models against reference outputs from the original networks).
+# - The app, generated with XcodeGen and compiled for the simulator and, unsigned, for iPhones.
+name: iOS
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version && swift --version
+
+      - name: Engine tests (with Core ML)
+        working-directory: ios/KeyCatchCore
+        run: swift test 2>&1 | tee ../../engine-tests.log
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for the simulator
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' build | tee ../app-simulator.log | tail -40
+
+      - name: Build for iPhone (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build | tee ../app-device.log | tail -40
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-logs
+          path: "*.log"

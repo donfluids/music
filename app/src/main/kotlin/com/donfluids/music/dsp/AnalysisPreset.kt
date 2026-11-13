@@ -67,7 +67,7 @@ data class AnalysisPreset(
         val VOICES = AnalysisPreset(
             id = "voices",
             title = "Voices",
-            description = "Mostly singing. Reads the key from the melody; tap the tempo in yourself.",
+            description = "Mostly singing. The key comes from the melody, and you tap the tempo.",
             onsetMinHz = 150.0, onsetMaxHz = 5000.0, onsetGamma = 10f,
             onsetLowBandMaxHz = 0.0, onsetLowBandWeight = 0f,
             chromaMinHz = 80.0, chromaMaxHz = 2000.0, chromaRollOffHz = 1000.0,
