@@ -232,6 +232,8 @@ public struct AnalysisPreset: Hashable, Sendable, Identifiable {
     public let chromaRollOffHz: Double
     /// How many seconds of sound the key estimate remembers.
     public let keyMemorySeconds: Double
+    /// The key profiles the heard chroma is matched against (not used for a melodic key).
+    public var keyProfile: KeyProfile = .krumhanslKessler
     public let tempoPriorCenterBpm: Double
     public let tempoPriorWidthOctaves: Double
     /// Beats needed before a time signature is shown.
@@ -256,7 +258,7 @@ public struct AnalysisPreset: Hashable, Sendable, Identifiable {
     public static let guitar = AnalysisPreset(
         id: "guitar", title: "Guitar", description: "Guitar and voices, no drums. Strums set the beat.",
         onsetMinHz: 60, onsetMaxHz: 6000, onsetGamma: 10, onsetLowBandMaxHz: 0, onsetLowBandWeight: 0,
-        chromaMinHz: 70, chromaMaxHz: 2500, chromaRollOffHz: 800, keyMemorySeconds: 8,
+        chromaMinHz: 70, chromaMaxHz: 2500, chromaRollOffHz: 800, keyMemorySeconds: 8, keyProfile: .temperley,
         tempoPriorCenterBpm: 120, tempoPriorWidthOctaves: 0.55, meterMinBeats: 8, beatModel: .full)
 
     /// Singing with little or no rhythm section: syllables are the only onsets.

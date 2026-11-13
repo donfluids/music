@@ -470,7 +470,7 @@ public final class MusicAnalyzer {
             // A lone voice's overtones read as chords (a sung E looks like an E major chord), so
             // with a tracked melody the chord evidence is left out: the notes speak for themselves.
             let chords = pitchTracker != nil ? [] : currentSegments()
-            let evidence = RelativeKeyResolver.evidence(found, notes, keyChroma(), chords, heardSeconds: now, nowSeconds: now, sigma: sigma)
+            let evidence = RelativeKeyResolver.evidence(found, notes, keyChroma(), chords, heardSeconds: now, nowSeconds: now, sigma: sigma, profiles: preset.keyProfile)
             pendingKey = modeTracker.update(found, evidence.total, RelativeKeyResolver.THRESHOLD * evidenceNeeded())
             pairOk = pitchTracker == nil || pairIsClear(notes)
             // A scattered singer gives weaker evidence: the shown confidence says so.
@@ -506,7 +506,7 @@ public final class MusicAnalyzer {
                 return
             }
         }
-        let ranked = KeyDetector.rank(keyChroma())
+        let ranked = KeyDetector.rank(keyChroma(), preset.keyProfile)
         let confidence = Float(KeyDetector.confidence(ranked))
         let best = ranked[0].key
         // Nothing is shown from the first moments: a single slide or breath is not a key.

@@ -57,7 +57,7 @@ object RelativeKeyResolver {
     fun evidence(
         key: Key, notes: List<SungNote>, chroma: FloatArray?, segments: List<ChordSegment>,
         heardSeconds: Double = Double.POSITIVE_INFINITY, nowSeconds: Double = Double.POSITIVE_INFINITY,
-        sigma: Double = 0.0,
+        sigma: Double = 0.0, profiles: KeyProfile = KeyProfile.KRUMHANSL_KESSLER,
     ): Evidence {
         val (major, minor) = pair(key)
         val M = major.tonic
@@ -69,7 +69,7 @@ object RelativeKeyResolver {
             leadingTone = leadingTone(notes, chroma, M, m, sigma),
             approaches = amount * approaches(notes, M, m, nowSeconds),
             chords = chords(segments, M, m),
-            profile = amount * profile(notes, chroma, major, minor, sigma),
+            profile = amount * profile(notes, chroma, major, minor, sigma, profiles),
             prior = PRIOR_MAJOR,
         )
     }
@@ -195,7 +195,7 @@ object RelativeKeyResolver {
         return (share + dominant + cadences).coerceIn(-2.5, 2.5)
     }
 
-    private fun profile(notes: List<SungNote>, chroma: FloatArray?, major: Key, minor: Key, sigma: Double): Double {
+    private fun profile(notes: List<SungNote>, chroma: FloatArray?, major: Key, minor: Key, sigma: Double, profiles: KeyProfile): Double {
         if (notes.size >= 8) {
             val ranked = MelodicKeyFinder.rank(notes, sigma = sigma)
             val a = ranked.firstOrNull { it.key == major }?.score ?: return 0.0
@@ -203,7 +203,7 @@ object RelativeKeyResolver {
             return (5.0 * (a - b)).coerceIn(-1.2, 1.2)
         }
         if (chroma == null) return 0.0
-        val ranked = KeyDetector.rank(chroma)
+        val ranked = KeyDetector.rank(chroma, profiles)
         val a = ranked.first { it.key == major }.correlation
         val b = ranked.first { it.key == minor }.correlation
         return (6.0 * (a - b)).coerceIn(-1.2, 1.2)

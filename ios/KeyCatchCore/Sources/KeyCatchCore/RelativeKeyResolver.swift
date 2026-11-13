@@ -57,7 +57,7 @@ public enum RelativeKeyResolver {
     public static func evidence(
         _ key: Key, _ notes: [SungNote], _ chroma: [Float]?, _ segments: [ChordSegment],
         heardSeconds: Double = Double.infinity, nowSeconds: Double = Double.infinity,
-        sigma: Double = 0.0
+        sigma: Double = 0.0, profiles: KeyProfile = .krumhanslKessler
     ) -> Evidence {
         let (major, minor) = pair(key)
         let M = major.tonic
@@ -73,7 +73,7 @@ public enum RelativeKeyResolver {
             leadingTone: leadingTone(notes, chroma, M, m, sigma),
             approaches: amount * approaches(notes, M, m, nowSeconds),
             chords: chords(segments, M, m),
-            profile: amount * profile(notes, chroma, major, minor, sigma),
+            profile: amount * profile(notes, chroma, major, minor, sigma, profiles),
             prior: PRIOR_MAJOR
         )
     }
@@ -210,7 +210,7 @@ public enum RelativeKeyResolver {
         return (share + dominant + cadences).coerceIn(-2.5, 2.5)
     }
 
-    private static func profile(_ notes: [SungNote], _ chroma: [Float]?, _ major: Key, _ minor: Key, _ sigma: Double) -> Double {
+    private static func profile(_ notes: [SungNote], _ chroma: [Float]?, _ major: Key, _ minor: Key, _ sigma: Double, _ profiles: KeyProfile) -> Double {
         if notes.count >= 8 {
             let ranked = MelodicKeyFinder.rank(notes, sigma: sigma)
             guard let a = ranked.first(where: { $0.key == major })?.score else { return 0.0 }
@@ -218,7 +218,7 @@ public enum RelativeKeyResolver {
             return (5.0 * (a - b)).coerceIn(-1.2, 1.2)
         }
         guard let chroma = chroma else { return 0.0 }
-        let ranked = KeyDetector.rank(chroma)
+        let ranked = KeyDetector.rank(chroma, profiles)
         let a = ranked.first(where: { $0.key == major })!.correlation
         let b = ranked.first(where: { $0.key == minor })!.correlation
         return (6.0 * (a - b)).coerceIn(-1.2, 1.2)
