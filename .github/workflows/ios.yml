@@ -1,0 +1,102 @@
+# Builds and tests the iPhone app on a Mac, since KeyCatch is developed without one.
+# - The engine package's tests, including the Core ML checks that only run on Apple systems
+#   (the models against reference outputs from the original networks).
+# - The app, generated with XcodeGen and compiled for the simulator and, unsigned, for iPhones.
+name: iOS
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version && swift --version
+
+      - name: Engine tests (with Core ML)
+        working-directory: ios/KeyCatchCore
+        # Release build: the analyser tests push minutes of synthesised audio through the engine,
+        # which a debug build runs many times slower. -enable-testing keeps @testable imports working.
+        run: |
+          swift test -c release -Xswiftc -enable-testing > ../../engine-tests.log 2>&1 && status=0 || status=$?
+          grep -E "error:|failed|Executed" ../../engine-tests.log | head -60 || true
+          exit $status
+
+      # The Core ML results, and a failure if any Beat This! Core ML test did not run or pass.
+      - name: Core ML checks
+        if: always()
+        run: |
+          grep -E "CoreMLModelsTests|CREPE|Basic Pitch|BeatThisCoreMLTests|Beat This!" engine-tests.log || echo "no Core ML lines"
+          for t in testBeatThisSmallMatchesPyTorch testBeatThisFullMatchesPyTorch testBeatThisSmallEndToEnd \
+                   testBeatThisFullEndToEnd testBeatThisTiming; do
+            grep -qE "BeatThisCoreMLTests[ .]$t\]?' passed" engine-tests.log \
+              || { echo "::error::BeatThisCoreMLTests $t did not run or did not pass"; exit 1; }
+          done
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      # On failure only the error lines are shown; the full log is thousands of lines.
+      - name: Build for the simulator
+        working-directory: ios
+        run: |
+          # An iPhone 16 on the newest installed iOS, for the build and the screenshots.
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin)['devices']
+          found = [d['udid'] for runtime, ds in sorted(devices.items()) if 'iOS' in runtime for d in ds if d['name'] == 'iPhone 16']
+          print(found[-1] if found else '')")
+          test -n "$UDID" || { xcrun simctl list devices available; exit 1; }
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Debug \
+            -destination "id=$UDID" -derivedDataPath build build > ../app-simulator.log 2>&1 \
+            || { grep -E "error:|BUILD FAILED" ../app-simulator.log | sort -u | head -150; exit 1; }
+          grep -E "warning:.*KeyCatch/Sources" ../app-simulator.log | sort -u | head -60 || true
+
+      # Each prepared screen (see ios/KeyCatch/Sources/Screenshots.swift) is photographed in the
+      # simulator. The account's artifact storage is full, so the pictures are printed into the log
+      # as base64 JPEG between BEGIN and END lines; tools/ios/screenshots.py turns them back into files.
+      - name: Screenshots
+        working-directory: ios
+        run: |
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b > /dev/null
+          xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/KeyCatch.app
+          mkdir -p ../shots
+          for s in 0-idle 0-idle-band 1-voices-settled 2-voices-wandering 3-voices-early 4-band \
+                   5-voices-settled-dark 6-voices-tapping 7-voices-do-re-mi-442 8-settings 9-history \
+                   12-what-to-expect 13-band-details; do
+            xcrun simctl launch --terminate-running-process "$UDID" com.donfluids.keycatch -screenshot "$s" > /dev/null
+            sleep 5
+            xcrun simctl io "$UDID" screenshot "../shots/$s.png" > /dev/null 2>&1
+          done
+          for f in ../shots/*.png; do
+            name=$(basename "$f" .png)
+            sips -s format jpeg -s formatOptions 75 -Z 1400 "$f" --out "../shots/$name.jpg" > /dev/null
+            echo "=====BEGIN $name"
+            base64 -i "../shots/$name.jpg" | fold -w 2000
+            echo "=====END $name"
+          done
+
+      - name: Build for iPhone (unsigned)
+        working-directory: ios
+        run: |
+          xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build > ../app-device.log 2>&1 \
+            || { grep -E "error:|BUILD FAILED" ../app-device.log | sort -u | head -150; exit 1; }

@@ -1,0 +1,16 @@
+// swift-tools-version:5.9
+import PackageDescription
+
+// KeyCatch's listening engine: plain Swift, so it builds and tests on Linux as well as on
+// Apple platforms. The Core ML models (CREPE, Basic Pitch, Beat This!) are used only where Core ML exists.
+let package = Package(
+    name: "KeyCatchCore",
+    platforms: [.iOS(.v17), .macOS(.v14)],
+    products: [.library(name: "KeyCatchCore", targets: ["KeyCatchCore"])],
+    targets: [
+        // The models are copied as they are and compiled on the device the first time they are used.
+        .target(name: "KeyCatchCore", resources: [.copy("Resources/CrepeTiny.mlpackage"), .copy("Resources/BasicPitchNotes.mlpackage"),
+                                                   .copy("Resources/BeatThisSmall.mlpackage"), .copy("Resources/BeatThisFull.mlpackage")]),
+        .testTarget(name: "KeyCatchCoreTests", dependencies: ["KeyCatchCore"], resources: [.copy("Resources")]),
+    ]
+)
