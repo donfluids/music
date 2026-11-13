@@ -107,6 +107,10 @@
     <string name="notes_standard">Standard</string>
     <string name="notes_basic_pitch">Accurate</string>
     <string name="settings_notes_help">In Band and Guitar modes, Accurate hears each note with a small learned model, Basic Pitch. It gets chords and keys right a little more often, even when the band is out of tune. Chords show about a second later, and the phone works harder. If Details says the phone is falling behind, choose Standard.</string>
+    <string name="settings_beat">Tempo and time signature</string>
+    <string name="beat_standard">Standard</string>
+    <string name="beat_beat_this">Accurate</string>
+    <string name="settings_beat_help">In Band and Guitar modes, Accurate follows the beat with a learned model (Beat This!). It gets the tempo and the time signature right more often, and the phone works harder. If Details says the phone is falling behind, choose Standard.</string>
     <string name="settings_pitch_help">Accurate follows the singers with a learned model, CREPE. It finds the right note more often, most of all in a noisy room, and the phone works harder. If Details says the phone is falling behind, choose Standard.</string>
     <string name="settings_naming_help">Do Re Mi uses fixed Do, so C is always Do.</string>
     <string name="done">Done</string>
@@ -143,7 +147,7 @@
     <string name="limits_one_key_lead">The song doesn\'t stay in one key.</string>
     <string name="limits_one_key">Blues, modal tunes and songs full of passing chords can pull it toward a neighboring key.</string>
     <string name="limits_beat_lead">The beat is busy.</string>
-    <string name="limits_beat">In Band and Guitar modes the tempo can lock onto double or half the real speed. Tap the BPM number to switch between them.</string>
+    <string name="limits_beat">In Band and Guitar modes the tempo can lock onto double or half the real speed. Tap the BPM number to switch between them. A song in 6/8 or 12/8 often shows as 2/4 or 4/4.</string>
     <string name="limits_voices_lead">Only voices are singing.</string>
     <string name="limits_voices">Singing rarely gives a steady beat, so in Voices mode you tap the tempo yourself.</string>
     <string name="limits_notes_heading">Good to know</string>
@@ -153,7 +157,7 @@
     <string name="limits_note_new">KeyCatch is new, and we haven\'t tried it in every kind of room or with every kind of band yet.</string>
     <string name="limits_closing">When it matters, trust your ears. If something looks off, press New song to start fresh.</string>
     <string name="limits_thanks_heading">Thanks</string>
-    <string name="limits_thanks">KeyCatch hears notes with two open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT License), and Basic Pitch, by Spotify\'s Audio Intelligence Lab (Apache 2.0). Text is set in Manrope (SIL Open Font License), and the icons are Google\'s Material Symbols (Apache 2.0). Their licenses ship with the app.</string>
+    <string name="limits_thanks">KeyCatch listens with three open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT License), Basic Pitch, by Spotify\'s Audio Intelligence Lab (Apache 2.0), and Beat This!, by Francesco Foscarin, Jan Schlüter and Gerhard Widmer (MIT License). Text is set in Manrope (SIL Open Font License), and the icons are Google\'s Material Symbols (Apache 2.0). Their licenses ship with the app.</string>
     <string name="limits_privacy">Everything happens on your phone. No audio leaves it unless you choose to share a recorded clip yourself.</string>
     <string name="sub_held">%1$s, held</string>
     <string name="unknown">not known yet</string>
@@ -170,6 +174,8 @@
     <string name="phone_load_busy">Working hard, but keeping up.</string>
     <string name="phone_load_behind">Falling behind. Choose Standard in Settings for this mode.</string>
     <string name="phone_load_dev">%1$s %2$.0f%% of real time</string>
+    <string name="phone_load_dev_every">%1$s %2$.0f%% of real time, a window every %3$d s</string>
+    <string name="phone_load_beat_too_slow">This phone is too slow for Accurate tempo, so Standard is in use.</string>
     <string name="settings_theme">Theme</string>
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
