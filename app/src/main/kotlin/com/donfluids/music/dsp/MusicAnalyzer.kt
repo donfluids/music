@@ -489,7 +489,7 @@ class MusicAnalyzer(
             // A lone voice's overtones read as chords (a sung E looks like an E major chord), so
             // with a tracked melody the chord evidence is left out: the notes speak for themselves.
             val chords = if (pitchTracker != null) emptyList() else currentSegments()
-            val evidence = RelativeKeyResolver.evidence(found, notes, keyChroma(), chords, heardSeconds = now, nowSeconds = now, sigma = sigma)
+            val evidence = RelativeKeyResolver.evidence(found, notes, keyChroma(), chords, heardSeconds = now, nowSeconds = now, sigma = sigma, profiles = preset.keyProfile)
             pendingKey = modeTracker.update(found, evidence.total, RelativeKeyResolver.THRESHOLD * evidenceNeeded())
             pairOk = pitchTracker == null || pairIsClear(notes)
             // A scattered singer gives weaker evidence: the shown confidence says so.
@@ -525,7 +525,7 @@ class MusicAnalyzer(
                 return
             }
         }
-        val ranked = KeyDetector.rank(keyChroma())
+        val ranked = KeyDetector.rank(keyChroma(), preset.keyProfile)
         val confidence = KeyDetector.confidence(ranked).toFloat()
         val best = ranked.first().key
         // Nothing is shown from the first moments: a single slide or breath is not a key.

@@ -26,6 +26,21 @@ class KeyDetectorTest {
     }
 
     @Test
+    fun temperleyProfilesFindTheSameScales() {
+        val cMajor = floatArrayOf(5f, 0f, 2f, 0f, 3f, 2f, 0f, 4f, 0f, 2f, 0f, 1.5f)
+        val aMinor = floatArrayOf(3f, 0f, 1.5f, 0f, 3.5f, 1.5f, 0f, 0.5f, 2f, 5f, 0f, 1.5f)
+        assertEquals(Key(0, Mode.MAJOR), KeyDetector.rank(cMajor, KeyProfile.TEMPERLEY).first().key)
+        assertEquals(Key(9, Mode.MINOR), KeyDetector.rank(aMinor, KeyProfile.TEMPERLEY).first().key)
+    }
+
+    @Test
+    fun onlyGuitarUsesTemperley() {
+        assertEquals(KeyProfile.TEMPERLEY, AnalysisPreset.GUITAR.keyProfile)
+        assertEquals(KeyProfile.KRUMHANSL_KESSLER, AnalysisPreset.BAND.keyProfile)
+        assertEquals(KeyProfile.KRUMHANSL_KESSLER, AnalysisPreset.VOICES.keyProfile)
+    }
+
+    @Test
     fun silenceHasNoConfidence() {
         val ranked = KeyDetector.rank(FloatArray(12))
         assertEquals(0.0, KeyDetector.confidence(ranked), 1e-9)

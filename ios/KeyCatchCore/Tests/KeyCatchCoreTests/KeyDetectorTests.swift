@@ -19,6 +19,19 @@ final class KeyDetectorTests: XCTestCase {
         XCTAssertEqual(Key(9, .minor), ranked.first!.key)
     }
 
+    func testTemperleyProfilesFindTheSameScales() {
+        let cMajor: [Float] = [5, 0, 2, 0, 3, 2, 0, 4, 0, 2, 0, 1.5]
+        let aMinor: [Float] = [3, 0, 1.5, 0, 3.5, 1.5, 0, 0.5, 2, 5, 0, 1.5]
+        XCTAssertEqual(Key(0, .major), KeyDetector.rank(cMajor, .temperley).first!.key)
+        XCTAssertEqual(Key(9, .minor), KeyDetector.rank(aMinor, .temperley).first!.key)
+    }
+
+    func testOnlyGuitarUsesTemperley() {
+        XCTAssertEqual(KeyProfile.temperley, AnalysisPreset.guitar.keyProfile)
+        XCTAssertEqual(KeyProfile.krumhanslKessler, AnalysisPreset.band.keyProfile)
+        XCTAssertEqual(KeyProfile.krumhanslKessler, AnalysisPreset.voices.keyProfile)
+    }
+
     func testSilenceHasNoConfidence() {
         let ranked = KeyDetector.rank([Float](repeating: 0, count: 12))
         XCTAssertEqual(0.0, KeyDetector.confidence(ranked), accuracy: 1e-9)

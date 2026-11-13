@@ -23,6 +23,8 @@ data class AnalysisPreset(
     val chromaRollOffHz: Double,
     /** How many seconds of sound the key estimate remembers. */
     val keyMemorySeconds: Double,
+    /** The key profiles the heard chroma is matched against (not used for a melodic key). */
+    val keyProfile: KeyProfile = KeyProfile.KRUMHANSL_KESSLER,
     val tempoPriorCenterBpm: Double,
     val tempoPriorWidthOctaves: Double,
     /** Beats needed before a time signature is shown. */
@@ -66,6 +68,7 @@ data class AnalysisPreset(
             onsetLowBandMaxHz = 0.0, onsetLowBandWeight = 0f,
             chromaMinHz = 70.0, chromaMaxHz = 2500.0, chromaRollOffHz = 800.0,
             keyMemorySeconds = 8.0,
+            keyProfile = KeyProfile.TEMPERLEY,
             tempoPriorCenterBpm = 120.0, tempoPriorWidthOctaves = 0.55,
             meterMinBeats = 8,
             beatModel = BeatThisModel.SMALL,

@@ -5,19 +5,36 @@ import com.donfluids.music.music.Mode
 import kotlin.math.sqrt
 
 /**
+ * The major and minor key profiles a chroma vector is matched against, tonic first.
+ */
+enum class KeyProfile(val major: DoubleArray, val minor: DoubleArray) {
+    /** Krumhansl & Kessler (1982) probe-tone ratings. */
+    KRUMHANSL_KESSLER(
+        doubleArrayOf(6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88),
+        doubleArrayOf(6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17),
+    ),
+
+    /**
+     * Temperley (1999), as in MelodicKeyFinder. On GuitarSet heard through Basic Pitch it finds
+     * the key of solo lines far more often than Krumhansl & Kessler (49 % against 35 %) and
+     * strummed takes about as often (tools/keyeval).
+     */
+    TEMPERLEY(
+        doubleArrayOf(5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0),
+        doubleArrayOf(5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0),
+    ),
+}
+
+/**
  * Krumhansl–Schmuckler key finding: correlate a 12-bin chroma vector with the 24
  * major/minor key profiles and pick the best match.
  */
 object KeyDetector {
 
-    // Krumhansl & Kessler (1982) probe-tone profiles, tonic first.
-    private val MAJOR = doubleArrayOf(6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88)
-    private val MINOR = doubleArrayOf(6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17)
-
     data class Candidate(val key: Key, val correlation: Double)
 
-    /** All 24 keys ranked by correlation with [chroma], best first. */
-    fun rank(chroma: FloatArray): List<Candidate> {
+    /** All 24 keys ranked by correlation with [chroma] under [profiles], best first. */
+    fun rank(chroma: FloatArray, profiles: KeyProfile = KeyProfile.KRUMHANSL_KESSLER): List<Candidate> {
         require(chroma.size == 12)
         val x = DoubleArray(12) { chroma[it].toDouble() }
         val xMean = x.average()
@@ -29,7 +46,7 @@ object KeyDetector {
         }
         val out = ArrayList<Candidate>(24)
         for (mode in Mode.entries) {
-            val profile = if (mode == Mode.MAJOR) MAJOR else MINOR
+            val profile = if (mode == Mode.MAJOR) profiles.major else profiles.minor
             val pMean = profile.average()
             var pVar = 0.0
             for (v in profile) pVar += (v - pMean) * (v - pMean)
