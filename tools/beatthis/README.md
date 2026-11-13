@@ -566,6 +566,16 @@ default). Band uses small0, Guitar final0, both as FP16 Core ML packages of 412 
   bar length, or the previous position carried on by whole beats) and "locked" (the last three
   readings within 4 % of each other; the screen says "settling" until then).
 * Compound: `bt_live.Feel` above, on the onset signal of the analyser's own OnsetDetector.
+* Core ML, measured in CI (GitHub macos-15 runner, Xcode 16.4; `BeatThisCoreMLTests`): the FP16
+  packages against the official PyTorch FP32 models on two inputs (a GuitarSet comp take at
+  12 s, the loud synthetic band of `make_fixtures.py` at 10 s): largest logit difference small0
+  0.058 / 0.067, final0 0.130 / 0.112; 1 and 2 of 824 logit signs differ; the picked beats and
+  downbeats are identical. End to end (StreamResampler, Swift front end, Core ML, reader) on the
+  synthetic band, both models give the same tempo, last beat, beats per bar and bar position as
+  the Python pipeline (soxr, float64 log-mel, PyTorch) at all 8 readings. Speed per run (one run a
+  second, two CI runs): small0 96-109 ms, final0 197-240 ms, about the same with CPU only (the
+  runner shows no Neural Engine); the resampler, front end and reading take 3.4 ms per second of audio. Not measured on
+  an iPhone.
 * The standard tracker keeps running beside it: the chord grid stays on it (chords are the same
   in both modes), and if the network fails the analyser goes back to it.
 
