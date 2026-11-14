@@ -30,9 +30,13 @@ numbers are measured. No app code was changed. Everything ran in scratch copies 
   a semitone up, and the label counts that as wrong.
 * **Noise floor.** A +10 c copy of a good singer, with 98 % of notes right, still loses 5 points
   (71.0 to 66.0): readings flip on small changes. So differences of a few points are within noise.
-* **Proposal: the guarded patch** (`detune_fix_guarded.patch`, against 6e4dad9). The grid takes
-  the key level's steady offset only when that offset is within 40 c of concert pitch, and the
-  sharp-singer test is added. Results with the guard:
+* **Proposal: v3** (`detune_fix_v3.patch`, against 9cccb20). It is the guarded patch plus one
+  check: the grid adopts the level only when the level sits 20-40 c from concert pitch. This
+  removes the guarded patch's in-tune regression (see "The in-tune case (v3)"), and RS200 +39
+  stays at 53.4.
+* **Earlier proposal: the guarded patch** (`detune_fix_guarded.patch`, against 6e4dad9). The grid
+  takes the key level's steady offset only when that offset is within 40 c of concert pitch, and
+  the sharp-singer test is added. Results with the guard:
   * RS200 +39: 49.5 to 53.4.
   * GTSinger +39: 41.1 to 43.0.
   * In-tune sets: within 0.5 points.
@@ -181,6 +185,98 @@ Results:
   before plus the new one. The new test is slow in a Swift debug build: SingerRobustnessTests went
   from about 580 s to 1175 s.
 
+## The in-tune case (v3)
+
+**What happened.** With every earlier patch variant, RS200 in tune went from 58 to 65
+decided-wrong readings. All seven extra readings came from two average-singer clips.
+
+* **Why the grid moved.** In both clips the key level read the in-tune singer as sharp, at
+  `steadyCents` +10.5 c (bizarre_love_triangle, at 13 s) and +21.0 c (brown-eyed_girl, at 15 s).
+  Both levels passed the held-level gates: spread 22-24 c (25 c or less), range 0-20 c (40 c or
+  less), now within 0-20 c of the centre. Both sat at least 10 c from the singer grid, which was at
+  0 to 2.5 c. So `adopt()` moved the grid to +12 c and +21 c. Across the in-tune RS200 average
+  clips, the level's centre falls in the 0 c lattice bin 35 % of the time, the 10 c bin 31 % and
+  the 20 c bin 8 %: for scattered singers it leans sharp by about 5-10 c.
+* **Why the mode or pair decision changed.** It is the move itself, not the spread term. A
+  variant with `keySpreadCents` ignoring `heldLevel` gave identical readings on both clips. In
+  both clips the current code already leans to the wrong key: bizarre_love_triangle shows G minor
+  (the song is B flat major) from 16 s on, and brown-eyed_girl shows B minor (the song is G) early
+  on. The move changed the evidence a little:
+  * In bizarre_love_triangle, the grid at +12 c tightened the singer model's spread (decision
+    spread 25 c instead of 30 c), so less evidence was needed. The mode score also got stronger
+    (-2.3 instead of -1.9). The wrong G minor is then decided at 8 of the live readings instead of 1.
+  * In brown-eyed_girl, at 18 s the B minor decision is kept one reading longer.
+
+  The move doesn't cross the key boundary. It makes the app more sure of a lean that was already
+  wrong.
+
+**Checks considered.**
+
+* **The level must sit at least N c from concert pitch.** This is the simplest check, and it
+  targets the cause: offsets smaller than the level's own lean are not evidence. Measured at
+  N = 15, 20 and 25 (table below).
+* **Ignore `heldLevel` in `keySpreadCents`.** No effect on the two clips, so not the cause.
+* **Adopt only when the singer model is unsure.** Its consistency was 0.0-0.1 in both clips when
+  the grid moved (as unsure as for a scattered singer off pitch), so it would not stop them.
+  Not measured over the sets.
+* **A minimum time held.** In brown-eyed_girl the level held about 21 c for the first 10 s
+  (18.6-21 c), so a hold time would not stop it either. Not measured.
+
+**Chosen: N = 20 c.** It is the smallest N that brings RS200 in tune back to the current count
+(58). N = 25 gives the same, and N = 15 leaves 59. RS200 +39 is unchanged from guard 40.
+
+Each cell is exact % / relative % / decided-wrong readings.
+
+| set | current | guard 40 | + min 15 | **+ min 20 (v3)** | + min 25 |
+|---|---|---|---|---|---|
+| RS200 in tune | 70.6 / 8.4 / 58 | 70.2 / 8.1 / 65 | 70.4 / 8.4 / 59 | 70.5 / 8.4 / 58 | 70.5 / 8.4 / 58 |
+| (average singer, in tune) | 70.2 / 7.0 / 12 | 69.5 / 6.4 / 20 | 69.9 / 7.1 / 14 | 70.1 / 7.0 / 13 | 70.1 / 7.0 / 13 |
+| RS200 +10 | 64.7 / 9.9 / 61 | 64.9 / 10.0 / 60 | 64.5 / 9.8 / 61 | 64.5 / 9.8 / 60 | 64.5 / 9.8 / 61 |
+| RS200 +20 | 62.6 / 8.0 / 52 | 63.7 / 7.7 / 53 | 63.7 / 7.7 / 54 | 63.6 / 7.7 / 53 | 63.6 / 7.7 / 53 |
+| RS200 +30 | 60.8 / 7.2 / 51 | 62.4 / 7.1 / 42 | 62.4 / 7.1 / 42 | 62.3 / 7.2 / 42 | 62.2 / 7.2 / 42 |
+| RS200 +39 | 49.5 / 8.3 / 41 | 53.4 / 8.1 / 41 | 53.4 / 8.1 / 41 | 53.4 / 7.9 / 41 | 53.2 / 7.9 / 41 |
+| RS200 +45 | 37.6 / 9.1 / 76 | 39.1 / 9.0 / 77 | 39.1 / 9.0 / 77 | 39.1 / 9.0 / 77 | 39.1 / 9.0 / 76 |
+| RS200 +50 | 28.2 / 3.3 / 108 | 28.7 / 3.6 / 111 | 28.7 / 3.6 / 111 | 28.7 / 3.6 / 111 | 28.7 / 3.6 / 111 |
+| RS200 -39 | 57.4 / 7.9 / 51 | 57.9 / 8.8 / 48 | 57.9 / 8.8 / 48 | 57.9 / 8.8 / 48 | 58.0 / 8.6 / 48 |
+| GTSinger in tune | 53.0 / 15.9 / 21 | 52.6 / 15.9 / 16 | 52.0 / 15.9 / 21 | 52.0 / 15.9 / 21 | 52.0 / 15.9 / 21 |
+| GTSinger +10 | 54.7 / 16.0 / 20 | 54.7 / 16.7 / 12 | 54.7 / 16.0 / 21 | 54.7 / 16.0 / 21 | 54.7 / 16.0 / 20 |
+| GTSinger +20 | 53.0 / 17.1 / 35 | 54.0 / 17.1 / 30 | 54.0 / 17.1 / 24 | 53.0 / 17.1 / 23 | 53.0 / 17.1 / 30 |
+| GTSinger +30 | 50.6 / 16.6 / 54 | 53.8 / 15.3 / 50 | 53.8 / 15.3 / 50 | 53.8 / 15.3 / 50 | 53.5 / 15.6 / 45 |
+| GTSinger +39 | 41.1 / 15.6 / 30 | 43.0 / 14.6 / 29 | 43.0 / 14.6 / 29 | 43.3 / 14.3 / 29 | 43.3 / 14.3 / 29 |
+| GTSinger +45 | 34.7 / 16.7 / 42 | 35.0 / 16.7 / 43 | 35.0 / 16.7 / 43 | 35.0 / 16.7 / 43 | 35.0 / 16.7 / 43 |
+| GTSinger +50 | 27.7 / 16.8 / 46 | 28.7 / 17.1 / 45 | 28.7 / 17.1 / 45 | 28.7 / 17.1 / 45 | 28.7 / 17.1 / 45 |
+| GTSinger -39 | 38.2 / 2.7 / 53 | 38.5 / 2.7 / 45 | 38.5 / 2.7 / 45 | 38.5 / 2.7 / 45 | 38.5 / 2.7 / 45 |
+| CSD English | 86.9 / 1.8 / 9 | 86.4 / 1.8 / 8 | 86.4 / 1.8 / 8 | 86.4 / 1.8 / 8 | 86.4 / 1.8 / 8 |
+| CSD English +39 | 85.7 / 1.4 / 7 | 86.0 / 1.3 / 7 | 86.0 / 1.3 / 7 | 86.0 / 1.3 / 7 | 86.0 / 1.3 / 7 |
+| app test tunes | 81.1 / 0.0 / 0 | 81.1 / 0.0 / 0 | 81.1 / 0.0 / 0 | 81.1 / 0.0 / 0 | 81.1 / 0.0 / 0 |
+| **decided-wrong, all sets** | 815 | 782 | 786 | 782 | 783 |
+| without the +50 rows | 661 | 626 | 630 | 626 | 627 |
+
+**What v3 leaves, compared with current.**
+* **Remaining extra readings.** Per clip, the in-tune sets differ from current only where
+  `heldLevel` touches decision caution:
+  * one reading in brown-eyed_girl, whose level reads +21 c, just past the minimum;
+  * one in GTSinger manon +10;
+  * two fewer, in stairway_to_heaven and csd_en048b, where no grid moved.
+* **Given back.** The guard-40 patch also lowered GTSinger's in-tune and +10 decided-wrong counts
+  (21 to 16 and 20 to 12). Those cuts came from grid moves under 20 c and are given back.
+* **Kept.** The sharp-singer gains: RS200 +30 and +39, GTSinger +39, and RS200 and GTSinger -39.
+
+**The hymn probe** (`SingerRobustnessTest`'s tune at +30, +39 and +45 c, scatter 10-30 c, 5 seeds):
+identical for guard 40 and v3. Every case is right on at least as many seeds as current. The only
+decided-wrong case is the one current also has, +45 c with 15 c scatter (1 seed).
+
+`aSingerSteadilySharpIsNeverSureOfTheKeyAbove` passes with v3.
+
+**Unit tests with v3:**
+* Kotlin, full suite: 155 tests, 0 failures, 3 skipped.
+* Swift voice suites (SingerModel, SingerRobustness, WanderingSingers, KeyLevelTracker,
+  MelodyKey, RelativeKey) in a Linux scratch build: 38 tests, 0 failures.
+
+**Equivalence check.** The scores were measured with a scratch build that reads the minimum from
+a property. The literal v3 code reproduces those readings on 15 of 15 clips checked (5 clips at
+0, +20 and +39 c).
+
 ## The change (first patch; the guarded patch adds the 40 c guard and the test)
 
 The patch is `detune_fix.patch` against 9ad92ca: Kotlin and Swift, about 85 added lines each in
@@ -227,7 +323,8 @@ Tried and not kept (RS200 +39 / in tune):
 | `dt_estimators.py` | offline comparison of tuning estimators on the segmented notes |
 | `apply_fix.py`, `apply_fix_swift.py` | the proposed change, applied to a scratch copy (Kotlin repo / `ios/KeyCatchCore`) |
 | `detune_fix.patch` | the first change (no boundary guard) as a patch against 9ad92ca |
-| `detune_fix_guarded.patch` | the proposal: the change with the 40 c guard, plus the sharp-singer test, Kotlin and Swift, against 6e4dad9 |
+| `detune_fix_v3.patch` | the proposal: the guarded patch with the 20 c minimum, Kotlin and Swift, code and test, against 9cccb20 |
+| `detune_fix_guarded.patch` | the earlier proposal: the change with the 40 c guard, plus the sharp-singer test, Kotlin and Swift, against 6e4dad9 |
 | `test_edits.py` | the test edits, used by `apply_fix.py` / `apply_fix_swift.py` |
 
 ## Reproducing
