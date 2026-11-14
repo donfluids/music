@@ -2,6 +2,8 @@
 # - The engine package's tests, including the Core ML checks that only run on Apple systems
 #   (the models against reference outputs from the original networks).
 # - The app, generated with XcodeGen and compiled for the simulator and, unsigned, for iPhones.
+# - On the KeyCatch branch, that unsigned iPhone build as an IPA on the pre-release
+#   keycatch-ios-latest, to be signed and installed with a free Apple ID (ios/README.md).
 name: iOS
 
 on:
@@ -10,6 +12,9 @@ on:
       - "ios/**"
       - ".github/workflows/ios.yml"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
   group: ios-${{ github.ref }}
@@ -98,5 +103,26 @@ jobs:
         working-directory: ios
         run: |
           xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build > ../app-device.log 2>&1 \
+            -destination 'generic/platform=iOS' -derivedDataPath build-device CODE_SIGNING_ALLOWED=NO build > ../app-device.log 2>&1 \
             || { grep -E "error:|BUILD FAILED" ../app-device.log | sort -u | head -150; exit 1; }
+
+      # The account's artifact storage is full, so the IPA goes on a GitHub pre-release instead,
+      # replaced on every push. It is unsigned: Sideloadly or AltStore sign it with the Apple ID.
+      - name: Unsigned IPA on a pre-release
+        if: github.ref_name == 'claude/android-music-key-tempo-dygdp2'
+        working-directory: ios
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          APP=build-device/Build/Products/Release-iphoneos/KeyCatch.app
+          test -d "$APP" || { echo "::error::$APP not found"; exit 1; }
+          rm -rf ipa && mkdir -p ipa/Payload
+          ditto "$APP" ipa/Payload/KeyCatch.app
+          (cd ipa && zip -qry KeyCatch.ipa Payload)
+          ls -l ipa/KeyCatch.ipa
+          TAG=keycatch-ios-latest
+          gh release delete "$TAG" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$TAG" ipa/KeyCatch.ipa --prerelease --target "$GITHUB_SHA" \
+            --title "KeyCatch for iPhone (${GITHUB_SHA::7}, unsigned)" \
+            --notes "Unsigned build of ${GITHUB_SHA} from ${GITHUB_REF_NAME}. Sign and install it with Sideloadly or AltStore and a free Apple ID; see ios/README.md. Apps signed with a free Apple ID stop opening after 7 days until they are signed again."
