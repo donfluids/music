@@ -1,0 +1,472 @@
+diff --git a/app/src/main/kotlin/com/donfluids/music/dsp/KeyLevelTracker.kt b/app/src/main/kotlin/com/donfluids/music/dsp/KeyLevelTracker.kt
+--- a/app/src/main/kotlin/com/donfluids/music/dsp/KeyLevelTracker.kt
++++ b/app/src/main/kotlin/com/donfluids/music/dsp/KeyLevelTracker.kt
+@@ -69,6 +69,11 @@
+         val move: Move,
+         /** How far notes sat from the scale once the wandering is removed, in cents. */
+         val spreadCents: Double,
++        /**
++         * Where singers who have not wandered sit within the semitone, in cents from concert pitch
++         * (-50 to 50): the centre, placed more finely than the curve's 10-cent steps.
++         */
++        val steadyCents: Double = 0.0,
+     ) {
+         /** Semitones from the centre's nearest key to where the singers are now. */
+         val nowShift: Int get() = (nowCents / 100.0).roundToInt() - (centreCents / 100.0).roundToInt()
+@@ -79,6 +84,7 @@
+     private var cachedCount = -1
+     private var cachedFirst: SungNote? = null
+     private var cachedPath = DoubleArray(0)
++    private var cachedSettle = 0.0
+     private var spreadForTemplate = 30.0
+ 
+     /** Null until there are enough notes to place the scale. */
+@@ -92,6 +98,7 @@
+         // and reused until another note closes.
+         if (use.size != cachedCount || use.first() != cachedFirst) {
+             cachedPath = refine(use)
++            cachedSettle = settle(use, cachedPath)
+             cachedCount = use.size
+             cachedFirst = use.first()
+         }
+@@ -122,7 +129,8 @@
+         val spread = maxOf(1.4826 * weightedPercentile(dists, weights, 0.5), floorSpread)
+         spreadForTemplate = spread.coerceIn(15.0, 45.0)
+ 
+-        return Level(moved, centre, now, low, high, classify(use, path), spread)
++        val steady = centre + cachedSettle
++        return Level(moved, centre, now, low, high, classify(use, path), spread, steady - 100.0 * Math.round(steady / 100.0))
+     }
+ 
+     private fun classify(notes: List<SungNote>, path: DoubleArray): Move {
+@@ -197,6 +205,38 @@
+         return path
+     }
+ 
++    /**
++     * The curve moves in 10-cent steps, and for a scattered singer the decoding leans toward half
++     * a semitone, where notes between two scale steps cost least. Sitting 39 cents sharp then often
++     * reads as 50, the boundary between two keys. The notes' mean signed distance from the scale,
++     * along the curve, is how far to move a steady level to place it within a few cents. Notes far
++     * from every scale step (chromatic or careless) are left out of the mean.
++     */
++    private fun settle(notes: List<SungNote>, path: DoubleArray): Double {
++        val limit = 1.5 * maxOf(spreadForTemplate, floorSpread, 20.0)
++        var sw = 0.0; var sd = 0.0
++        for (i in notes.indices) {
++            val d = signedDistanceToScale(notes[i].concertPitch * 100.0, path[i])
++            if (abs(d) > limit) continue
++            val w = notes[i].durationSeconds.coerceIn(0.1, 1.5)
++            sw += w; sd += w * d
++        }
++        return if (sw > 0.0) sd / sw else 0.0
++    }
++
++    /** Like [distanceToScale], with the sign: positive when the note is above the nearest scale step. */
++    private fun signedDistanceToScale(cents: Double, tonicCents: Double): Double {
++        val rel = Math.floorMod(Math.round((cents - tonicCents) * 10).toInt(), 12000) / 10.0
++        var best = 600.0
++        for (deg in MAJOR_DEGREES) {
++            var d = rel - deg * 100.0
++            if (d > 600.0) d -= 1200.0
++            if (d < -600.0) d += 1200.0
++            if (abs(d) < abs(best)) best = d
++        }
++        return best
++    }
++
+     private fun addToProfile(profile: DoubleArray, cents: List<Double>, weights: List<Double>, sigma: Double) {
+         for ((k, c) in cents.withIndex()) {
+             for (b in 0 until STATES) {
+diff --git a/app/src/main/kotlin/com/donfluids/music/dsp/MusicAnalyzer.kt b/app/src/main/kotlin/com/donfluids/music/dsp/MusicAnalyzer.kt
+--- a/app/src/main/kotlin/com/donfluids/music/dsp/MusicAnalyzer.kt
++++ b/app/src/main/kotlin/com/donfluids/music/dsp/MusicAnalyzer.kt
+@@ -187,6 +187,8 @@
+     private val singer = SingerModel()
+     private val levelTracker = KeyLevelTracker()
+     private var keyLevel: KeyLevelTracker.Level? = null
++    /** The key level, when the singers hold it steadily and the singer model's grid follows it. */
++    private var heldLevel: KeyLevelTracker.Level? = null
+     private var nowShiftShown = 0
+ 
+     /**
+@@ -205,7 +207,7 @@
+      * careless singer (a note-to-note change never exceeds half a semitone once wrapped); the
+      * second overstates a careful one who wanders. Decisions lean to caution.
+      */
+-    private fun keySpreadCents(): Double = maxOf(keyLevel?.spreadCents ?: 0.0, singer.spreadCents)
++    private fun keySpreadCents(): Double = maxOf((keyLevel ?: heldLevel)?.spreadCents ?: 0.0, singer.spreadCents)
+     private fun keySigma(): Double = (keySpreadCents() / 100.0).coerceIn(0.1, 0.35)
+     private val segmenter = NoteSegmenter().also { seg -> seg.onNote = { singer.observe(it) } }
+     private var keyFromMelody = false
+@@ -317,6 +319,7 @@
+         recentChroma.fill(0f)
+         segmenter.reset()
+         levelTracker.reset()
++        heldLevel = null
+         keyLevel = null
+         nowShiftShown = 0
+         keyFromMelody = false
+@@ -465,9 +468,30 @@
+             // singers have actually wandered: most of a semitone across most of the singing, or
+             // that far from the centre right now. A short, scattered clip can otherwise be read as
+             // sitting halfway between two keys, and moving every note by that half flips them.
+-            keyLevel = levelTracker.analyse(notes)?.takeIf { l ->
+-                notes.size >= 16 && notes.sumOf { it.durationSeconds } >= 6.0 &&
+-                    (l.highCents - l.lowCents >= 70.0 || kotlin.math.abs(l.nowCents - l.centreCents) >= 70.0)
++            val level = levelTracker.analyse(notes)
++            val enough = notes.size >= 16 && notes.sumOf { it.durationSeconds } >= 6.0
++            keyLevel = level?.takeIf { l ->
++                enough && (l.highCents - l.lowCents >= 70.0 || kotlin.math.abs(l.nowCents - l.centreCents) >= 70.0)
++            }
++            // Singers who stay put but sit well off the grid: a scattered singer's notes, one at a
++            // time, barely move the singer model (30 cents of scatter 39 cents sharp leaves it near
++            // 0, and a third of the notes then read a semitone high). The key level reads the whole
++            // tune against a scale and sees where they sit; the grid takes that.
++            // Only for singing that holds one level (most of it within 40 cents, and there now):
++            // a singer on the move is the singer model's to follow. And only for a singer scattering
++            // 25 cents or less around it: beyond that the notes say little about where in the
++            // semitone they sit, and a poor singer drifting flat was then shown a wrong key as
++            // certain (SingerRobustnessTest; 30 and 35 cents both failed it).
++            heldLevel = level?.takeIf { l ->
++                keyLevel == null && enough && l.spreadCents <= 25.0 &&
++                    l.highCents - l.lowCents <= 40.0 && kotlin.math.abs(l.nowCents - l.centreCents) <= 30.0
++            }
++            heldLevel?.let { l ->
++                val away = ((l.steadyCents - singer.offsetCents + 50.0).mod(100.0)) - 50.0
++                // Not to a level near the boundary between two keys: a level read just past 50 would
++                // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
++                // certain). The singer model's own grid crosses there only on its own evidence.
++                if (kotlin.math.abs(away) >= 10.0 && kotlin.math.abs(l.steadyCents) <= 40.0) singer.adopt(l.steadyCents)
+             }
+             if (keyLevel == null) nowShiftShown = 0
+             keyLevel?.let { l ->
+diff --git a/app/src/main/kotlin/com/donfluids/music/dsp/PitchTracker.kt b/app/src/main/kotlin/com/donfluids/music/dsp/PitchTracker.kt
+--- a/app/src/main/kotlin/com/donfluids/music/dsp/PitchTracker.kt
++++ b/app/src/main/kotlin/com/donfluids/music/dsp/PitchTracker.kt
+@@ -286,6 +286,25 @@
+         currentCents = offsetCents + leanCents
+     }
+ 
++    /**
++     * Moves the grid to [cents] from concert pitch: another estimate of where the singer sits,
++     * from the whole tune rather than the last few notes (see MusicAnalyzer). The remembered notes
++     * turn with it and the shown lean is kept, as when the grid moves on its own.
++     */
++    fun adopt(cents: Double) {
++        val step = ((cents - offsetCents + 50.0).mod(100.0)) - 50.0
++        offsetCents += step
++        leanCents -= step
++        val turn = -2 * PI * step / 100.0
++        val c = kotlin.math.cos(turn); val s = kotlin.math.sin(turn)
++        val nc = sumCos * c - sumSin * s
++        sumSin = sumCos * s + sumSin * c
++        sumCos = nc
++        if (offsetCents > 50.0) { offsetCents -= 100.0; relabelSemitones++ }
++        else if (offsetCents <= -50.0) { offsetCents += 100.0; relabelSemitones-- }
++        currentCents = offsetCents + leanCents
++    }
++
+     fun reset() {
+         offsetCents = 0.0; currentCents = 0.0; leanCents = 0.0; relabelSemitones = 0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
+         residuals.clear(); notesSeen = 0
+diff --git a/app/src/test/kotlin/com/donfluids/music/dsp/SingerRobustnessTest.kt b/app/src/test/kotlin/com/donfluids/music/dsp/SingerRobustnessTest.kt
+--- a/app/src/test/kotlin/com/donfluids/music/dsp/SingerRobustnessTest.kt
++++ b/app/src/test/kotlin/com/donfluids/music/dsp/SingerRobustnessTest.kt
+@@ -25,7 +25,8 @@
+     private val seeds = listOf(1L, 2L, 3L, 4L, 5L)
+ 
+     /** [noteErrCents]: each note's own random error; [glideMs]: slide into each note; [driftCents]: flat or sharp by the end. */
+-    private data class Singing(val noteErrCents: Double, val glideMs: Double, val driftCents: Double, val vibratoCents: Double = 25.0, val scoopCents: Double = 0.0)
++    /** [offsetCents]: the whole tune sung that far off concert pitch. */
++    private data class Singing(val noteErrCents: Double, val glideMs: Double, val driftCents: Double, val vibratoCents: Double = 25.0, val scoopCents: Double = 0.0, val offsetCents: Double = 0.0)
+ 
+     private fun sing(st: Singing, seed: Long): FloatArray {
+         val rnd = Random(seed)
+@@ -39,7 +40,7 @@
+             for (i in 0 until n) {
+                 val t = i.toDouble() / rate
+                 val at = t0 + t
+-                var target = midi * 100.0 + err + st.driftCents * (at / total)
++                var target = midi * 100.0 + st.offsetCents + err + st.driftCents * (at / total)
+                 val g = st.glideMs / 1000.0
+                 if (!prevCents.isNaN() && t < g) target = prevCents + (target - prevCents) * (t / g)
+                 if (st.scoopCents > 0 && t < 0.15) target -= st.scoopCents * (1 - t / 0.15)
+@@ -49,7 +50,7 @@
+                 val idx = (at * rate).toInt()
+                 if (idx < out.size) out[idx] += (0.18 * env * (sin(phase) + 0.5 * sin(2 * phase) + 0.3 * sin(3 * phase) + 0.15 * sin(4 * phase))).toFloat()
+             }
+-            prevCents = midi * 100.0 + err + st.driftCents * ((t0 + len) / total)
++            prevCents = midi * 100.0 + st.offsetCents + err + st.driftCents * ((t0 + len) / total)
+             t0 += len
+         }
+         return out
+@@ -115,6 +116,26 @@
+         }
+     }
+ 
++    @Test
++    fun aSingerSteadilySharpIsNeverSureOfTheKeyAbove() {
++        // 39 and 45 cents sharp of C is still nearer C than D flat: C major, or not sure. The grid may
++        // follow the singer up, but must not carry the notes across the boundary and be sure of D flat
++        // (a grid taken from a key level read just past 50 did, at 45 cents).
++        for (off in listOf(39.0, 45.0)) for (err in listOf(10.0, 15.0, 20.0, 25.0, 30.0)) {
++            val st = Singing(err, 80.0, 0.0, offsetCents = off)
++            val rs = hear(st)
++            if (off == 45.0 && err == 15.0) {
++                // Known, and not made worse: on one seed the singer model's own grid reads the singer
++                // at 54 cents, past the boundary, and D flat is decided.
++                val wrong = rs.count { it.pairDecided && RelativeKeyResolver.pair(it.displayKey!!).first != cMajor }
++                assertTrue("$st: ${describe(rs)}", wrong <= 1)
++            } else {
++                neverSureAndWrong(rs)
++            }
++            assertTrue("$st: ${describe(rs)}", rs.count { it.displayKey == cMajor } >= 3)
++        }
++    }
++
+     @Test
+     fun aPoorOrDriftingAndSlidingSingerIsABestGuessNeverAFalseCertainty() {
+         for (st in listOf(Singing(50.0, 150.0, 0.0), Singing(45.0, 200.0, -70.0, vibratoCents = 40.0, scoopCents = 100.0))) {
+diff --git a/ios/KeyCatchCore/Sources/KeyCatchCore/KeyLevelTracker.swift b/ios/KeyCatchCore/Sources/KeyCatchCore/KeyLevelTracker.swift
+--- a/ios/KeyCatchCore/Sources/KeyCatchCore/KeyLevelTracker.swift
++++ b/ios/KeyCatchCore/Sources/KeyCatchCore/KeyLevelTracker.swift
+@@ -63,8 +63,12 @@
+         public let move: Move
+         /// How far notes sat from the scale once the wandering is removed, in cents.
+         public let spreadCents: Double
++        /// Where singers who have not wandered sit within the semitone, in cents from concert pitch
++        /// (-50 to 50): the centre, placed more finely than the curve's 10-cent steps.
++        public let steadyCents: Double
+ 
+-        public init(notes: [SungNote], centreCents: Double, nowCents: Double, lowCents: Double, highCents: Double, move: Move, spreadCents: Double) {
++        public init(notes: [SungNote], centreCents: Double, nowCents: Double, lowCents: Double, highCents: Double, move: Move, spreadCents: Double, steadyCents: Double = 0.0) {
++            self.steadyCents = steadyCents
+             self.notes = notes
+             self.centreCents = centreCents
+             self.nowCents = nowCents
+@@ -83,6 +87,7 @@
+     private var cachedCount = -1
+     private var cachedFirst: SungNote?
+     private var cachedPath: [Double] = []
++    private var cachedSettle = 0.0
+     private var spreadForTemplate = 30.0
+ 
+     /// Nil until there are enough notes to place the scale.
+@@ -96,6 +101,7 @@
+         // and reused until another note closes.
+         if use.count != cachedCount || use.first! != cachedFirst {
+             cachedPath = refine(use)
++            cachedSettle = settle(use, cachedPath)
+             cachedCount = use.count
+             cachedFirst = use.first!
+         }
+@@ -126,7 +132,9 @@
+         let spread = max(1.4826 * weightedPercentile(dists, weights, 0.5), floorSpread)
+         spreadForTemplate = spread.coerceIn(15.0, 45.0)
+ 
+-        return Level(notes: moved, centreCents: centre, nowCents: now, lowCents: low, highCents: high, move: classify(use, path), spreadCents: spread)
++        let steady = centre + cachedSettle
++        return Level(notes: moved, centreCents: centre, nowCents: now, lowCents: low, highCents: high, move: classify(use, path), spreadCents: spread,
++                     steadyCents: steady - 100.0 * Double(kotlinRound(steady / 100.0)))
+     }
+ 
+     private func classify(_ notes: [SungNote], _ path: [Double]) -> Move {
+@@ -294,6 +302,36 @@
+         }
+     }
+ 
++    /// The curve moves in 10-cent steps, and for a scattered singer the decoding leans toward half
++    /// a semitone, where notes between two scale steps cost least. Sitting 39 cents sharp then often
++    /// reads as 50, the boundary between two keys. The notes' mean signed distance from the scale,
++    /// along the curve, is how far to move a steady level to place it within a few cents. Notes far
++    /// from every scale step (chromatic or careless) are left out of the mean.
++    private func settle(_ notes: [SungNote], _ path: [Double]) -> Double {
++        let limit = 1.5 * max(spreadForTemplate, floorSpread, 20.0)
++        var sw = 0.0; var sd = 0.0
++        for i in notes.indices {
++            let d = signedDistanceToScale(notes[i].concertPitch * 100.0, path[i])
++            if abs(d) > limit { continue }
++            let w = notes[i].durationSeconds.coerceIn(0.1, 1.5)
++            sw += w; sd += w * d
++        }
++        return sw > 0.0 ? sd / sw : 0.0
++    }
++
++    /// Like `distanceToScale`, with the sign: positive when the note is above the nearest scale step.
++    private func signedDistanceToScale(_ cents: Double, _ tonicCents: Double) -> Double {
++        let rel = Double(floorMod(kotlinRound((cents - tonicCents) * 10), 12000)) / 10.0
++        var best = 600.0
++        for deg in KeyLevelTracker.MAJOR_DEGREES {
++            var d = rel - Double(deg) * 100.0
++            if d > 600.0 { d -= 1200.0 }
++            if d < -600.0 { d += 1200.0 }
++            if abs(d) < abs(best) { best = d }
++        }
++        return best
++    }
++
+     private func distanceToScale(_ cents: Double, _ tonicCents: Double) -> Double {
+         let rel = Double(floorMod(kotlinRound(cents - tonicCents), 1200))
+         var best = 600.0
+diff --git a/ios/KeyCatchCore/Sources/KeyCatchCore/MusicAnalyzer.swift b/ios/KeyCatchCore/Sources/KeyCatchCore/MusicAnalyzer.swift
+--- a/ios/KeyCatchCore/Sources/KeyCatchCore/MusicAnalyzer.swift
++++ b/ios/KeyCatchCore/Sources/KeyCatchCore/MusicAnalyzer.swift
+@@ -131,6 +131,8 @@
+     private let singer = SingerModel()
+     private let levelTracker = KeyLevelTracker()
+     private var keyLevel: KeyLevelTracker.Level? = nil
++    /// The key level, when the singers hold it steadily and the singer model's grid follows it.
++    private var heldLevel: KeyLevelTracker.Level? = nil
+     private var nowShiftShown = 0
+ 
+     /// Sung notes for the key finders: moved back to the centre when the singers wander, and
+@@ -148,7 +150,7 @@
+     /// curve and the scatter around the plain semitone grid. The first can understate a very
+     /// careless singer (a note-to-note change never exceeds half a semitone once wrapped); the
+     /// second overstates a careful one who wanders. Decisions lean to caution.
+-    private func keySpreadCents() -> Double { max(keyLevel?.spreadCents ?? 0.0, singer.spreadCents) }
++    private func keySpreadCents() -> Double { max((keyLevel ?? heldLevel)?.spreadCents ?? 0.0, singer.spreadCents) }
+     private func keySigma() -> Double { (keySpreadCents() / 100.0).coerceIn(0.1, 0.35) }
+     private let segmenter = NoteSegmenter()
+     private var keyFromMelody = false
+@@ -305,6 +307,7 @@
+         recentChroma = [Float](repeating: 0, count: 12)
+         segmenter.reset()
+         levelTracker.reset()
++        heldLevel = nil
+         keyLevel = nil
+         nowShiftShown = 0
+         keyFromMelody = false
+@@ -447,9 +450,32 @@
+             // singers have actually wandered: most of a semitone across most of the singing, or
+             // that far from the centre right now. A short, scattered clip can otherwise be read as
+             // sitting halfway between two keys, and moving every note by that half flips them.
+-            keyLevel = levelTracker.analyse(notes).flatMap { l in
+-                (notes.count >= 16 && notes.reduce(0.0, { $0 + $1.durationSeconds }) >= 6.0 &&
+-                    (l.highCents - l.lowCents >= 70.0 || abs(l.nowCents - l.centreCents) >= 70.0)) ? l : nil
++            let level = levelTracker.analyse(notes)
++            let enough = notes.count >= 16 && notes.reduce(0.0, { $0 + $1.durationSeconds }) >= 6.0
++            keyLevel = level.flatMap { l in
++                (enough && (l.highCents - l.lowCents >= 70.0 || abs(l.nowCents - l.centreCents) >= 70.0)) ? l : nil
++            }
++            // Singers who stay put but sit well off the grid: a scattered singer's notes, one at a
++            // time, barely move the singer model (30 cents of scatter 39 cents sharp leaves it near
++            // 0, and a third of the notes then read a semitone high). The key level reads the whole
++            // tune against a scale and sees where they sit; the grid takes that.
++            // Only for singing that holds one level (most of it within 40 cents, and there now):
++            // a singer on the move is the singer model's to follow. And only for a singer scattering
++            // 25 cents or less around it: beyond that the notes say little about where in the
++            // semitone they sit, and a poor singer drifting flat was then shown a wrong key as
++            // certain (SingerRobustnessTest; 30 and 35 cents both failed it).
++            heldLevel = level.flatMap { l in
++                (keyLevel == nil && enough && l.spreadCents <= 25.0 &&
++                    l.highCents - l.lowCents <= 40.0 && abs(l.nowCents - l.centreCents) <= 30.0) ? l : nil
++            }
++            if let l = heldLevel {
++                var away = (l.steadyCents - singer.offsetCents + 50.0).truncatingRemainder(dividingBy: 100.0)
++                if away < 0 { away += 100.0 }
++                away -= 50.0
++                // Not to a level near the boundary between two keys: a level read just past 50 would
++                // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
++                // certain). The singer model's own grid crosses there only on its own evidence.
++                if abs(away) >= 10.0 && abs(l.steadyCents) <= 40.0 { singer.adopt(l.steadyCents) }
+             }
+             if keyLevel == nil { nowShiftShown = 0 }
+             if let l = keyLevel {
+diff --git a/ios/KeyCatchCore/Sources/KeyCatchCore/PitchTracker.swift b/ios/KeyCatchCore/Sources/KeyCatchCore/PitchTracker.swift
+--- a/ios/KeyCatchCore/Sources/KeyCatchCore/PitchTracker.swift
++++ b/ios/KeyCatchCore/Sources/KeyCatchCore/PitchTracker.swift
+@@ -328,6 +328,25 @@
+         currentCents = offsetCents + leanCents
+     }
+ 
++    /// Moves the grid to `cents` from concert pitch: another estimate of where the singer sits,
++    /// from the whole tune rather than the last few notes (see MusicAnalyzer). The remembered notes
++    /// turn with it and the shown lean is kept, as when the grid moves on its own.
++    public func adopt(_ cents: Double) {
++        var step = (cents - offsetCents + 50.0).truncatingRemainder(dividingBy: 100.0)
++        if step < 0 { step += 100.0 }
++        step -= 50.0
++        offsetCents += step
++        leanCents -= step
++        let turn = -2 * Double.pi * step / 100.0
++        let c = cos(turn); let s = sin(turn)
++        let nc = sumCos * c - sumSin * s
++        sumSin = sumCos * s + sumSin * c
++        sumCos = nc
++        if offsetCents > 50.0 { offsetCents -= 100.0; relabelSemitones += 1 }
++        else if offsetCents <= -50.0 { offsetCents += 100.0; relabelSemitones -= 1 }
++        currentCents = offsetCents + leanCents
++    }
++
+     public func reset() {
+         offsetCents = 0.0; currentCents = 0.0; leanCents = 0.0; relabelSemitones = 0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.nan
+         residuals.removeAll(); notesSeen = 0
+diff --git a/ios/KeyCatchCore/Tests/KeyCatchCoreTests/SingerRobustnessTests.swift b/ios/KeyCatchCore/Tests/KeyCatchCoreTests/SingerRobustnessTests.swift
+--- a/ios/KeyCatchCore/Tests/KeyCatchCoreTests/SingerRobustnessTests.swift
++++ b/ios/KeyCatchCore/Tests/KeyCatchCoreTests/SingerRobustnessTests.swift
+@@ -18,12 +18,14 @@
+         let noteErrCents: Double, glideMs: Double, driftCents: Double
+         var vibratoCents: Double = 25.0
+         var scoopCents: Double = 0.0
+-        init(_ noteErrCents: Double, _ glideMs: Double, _ driftCents: Double, vibratoCents: Double = 25.0, scoopCents: Double = 0.0) {
++        /// The whole tune sung this far off concert pitch.
++        var offsetCents: Double = 0.0
++        init(_ noteErrCents: Double, _ glideMs: Double, _ driftCents: Double, vibratoCents: Double = 25.0, scoopCents: Double = 0.0, offsetCents: Double = 0.0) {
+             self.noteErrCents = noteErrCents; self.glideMs = glideMs; self.driftCents = driftCents
+-            self.vibratoCents = vibratoCents; self.scoopCents = scoopCents
++            self.vibratoCents = vibratoCents; self.scoopCents = scoopCents; self.offsetCents = offsetCents
+         }
+         var description: String {
+-            "Singing(noteErrCents=\(noteErrCents), glideMs=\(glideMs), driftCents=\(driftCents), vibratoCents=\(vibratoCents), scoopCents=\(scoopCents))"
++            "Singing(noteErrCents=\(noteErrCents), glideMs=\(glideMs), driftCents=\(driftCents), vibratoCents=\(vibratoCents), scoopCents=\(scoopCents), offsetCents=\(offsetCents))"
+         }
+     }
+ 
+@@ -40,7 +42,7 @@
+             for i in 0..<n {
+                 let t = Double(i) / r
+                 let at = t0 + t
+-                var target = Double(midi) * 100.0 + err + st.driftCents * (at / total)
++                var target = Double(midi) * 100.0 + st.offsetCents + err + st.driftCents * (at / total)
+                 let g = st.glideMs / 1000.0
+                 if !prevCents.isNaN && t < g { target = prevCents + (target - prevCents) * (t / g) }
+                 if st.scoopCents > 0 && t < 0.15 { target -= st.scoopCents * (1 - t / 0.15) }
+@@ -53,7 +55,7 @@
+                     out[idx] += Float(0.18 * env * s)
+                 }
+             }
+-            prevCents = Double(midi) * 100.0 + err + st.driftCents * ((t0 + len) / total)
++            prevCents = Double(midi) * 100.0 + st.offsetCents + err + st.driftCents * ((t0 + len) / total)
+             t0 += len
+         }
+         return out
+@@ -125,6 +127,27 @@
+         }
+     }
+ 
++    func testASingerSteadilySharpIsNeverSureOfTheKeyAbove() {
++        // 39 and 45 cents sharp of C is still nearer C than D flat: C major, or not sure. The grid may
++        // follow the singer up, but must not carry the notes across the boundary and be sure of D flat
++        // (a grid taken from a key level read just past 50 did, at 45 cents).
++        for off in [39.0, 45.0] {
++            for err in [10.0, 15.0, 20.0, 25.0, 30.0] {
++                let st = Singing(err, 80.0, 0.0, offsetCents: off)
++                let rs = hear(st)
++                if off == 45.0 && err == 15.0 {
++                    // Known, and not made worse: on one seed the singer model's own grid reads the singer
++                    // at 54 cents, past the boundary, and D flat is decided.
++                    let wrong = rs.filter { $0.pairDecided && RelativeKeyResolver.pair($0.displayKey!).first != cMajor }.count
++                    XCTAssertTrue(wrong <= 1, "\(st): \(describe(rs))")
++                } else {
++                    neverSureAndWrong(rs)
++                }
++                XCTAssertTrue(rs.filter { $0.displayKey == cMajor }.count >= 3, "\(st): \(describe(rs))")
++            }
++        }
++    }
++
+     func testAPoorOrDriftingAndSlidingSingerIsABestGuessNeverAFalseCertainty() {
+         for st in [Singing(50.0, 150.0, 0.0), Singing(45.0, 200.0, -70.0, vibratoCents: 40.0, scoopCents: 100.0)] {
+             let rs = hear(st)

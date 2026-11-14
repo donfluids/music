@@ -1,5 +1,5 @@
-"""The proposed detune fix ("adopt+refine" in the measurements), as edits to a SCRATCH COPY of
-the repo at 9ad92ca (never the real checkout). Kotlin only; the Swift port is the same three edits
+"""The proposed detune fix (guarded), as edits to a SCRATCH COPY of
+the repo at 6e4dad9 (Voices code as at 9ad92ca; never the real checkout). Kotlin only; the Swift port is the same three edits
 in ios/KeyCatchCore (PitchTracker.swift, KeyLevelTracker.swift, MusicAnalyzer.swift).
 
   1. KeyLevelTracker: the level curve lives on a 10-cent lattice and leans toward half a semitone
@@ -11,7 +11,9 @@ in ios/KeyCatchCore (PitchTracker.swift, KeyLevelTracker.swift, MusicAnalyzer.sw
   3. MusicAnalyzer.updateKey: when the singers hold one level (within 40 cents, and there now),
      scatter no more than 25 cents around it, and its steady offset is 10 cents or more from the
      singer model's grid, the grid adopts it. Everything downstream (key notes, relabelling, the
-     tuning shown) then follows.
+     tuning shown) then follows. Not to a level more than 40 cents from concert pitch: one read
+     just past 50 would carry every note across the boundary.
+  4. SingerRobustnessTest: a hymn sung 39 and 45 cents sharp is never sure of the key above.
 
 usage: python -I apply_fix.py SCRATCH_REPO
 """
@@ -132,7 +134,10 @@ def main():
             }
             heldLevel?.let { l ->
                 val away = ((l.steadyCents - singer.offsetCents + 50.0).mod(100.0)) - 50.0
-                if (kotlin.math.abs(away) >= 10.0) singer.adopt(l.steadyCents)
+                // Not to a level near the boundary between two keys: a level read just past 50 would
+                // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
+                // certain). The singer model's own grid crosses there only on its own evidence.
+                if (kotlin.math.abs(away) >= 10.0 && kotlin.math.abs(l.steadyCents) <= 40.0) singer.adopt(l.steadyCents)
             }
 """)
     # The grid taken from the level makes the singer model's own scatter look tighter than the
@@ -148,6 +153,10 @@ def main():
 """, """        levelTracker.reset()
         heldLevel = null
 """)
+    # The test: sharp singers (+39, +45 c) are never sure of the key above.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import test_edits
+    test_edits.apply(os.path.join(repo, "app/src/test/kotlin/com/donfluids/music/dsp/SingerRobustnessTest.kt"), test_edits.KT_SUBS)
     print("fix applied:", repo)
 
 
