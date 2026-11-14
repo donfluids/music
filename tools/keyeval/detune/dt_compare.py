@@ -1,6 +1,8 @@
 """Exact / relative % of the shown key at the live moments, per data set, for several DetuneTrace
 runs side by side (each NAME=DIR, DIR holding <id>.jsonl; a run missing a clip leaves its cell
-empty). RS200 rows are also split by singer when --by-singer is given.
+empty), and the number of decided-wrong readings: the mode decided and the shown key wrong, or
+the pair decided and the pair wrong (the app's rule is that decided means right). RS200 rows are
+also split by singer when --by-singer is given.
 
 usage: python -I dt_compare.py --items ITEMS.json [..] --run base=OUT/base --run fix=OUT2/base ...
          [--skey-work SKEY_WORK] [--by-singer]
@@ -16,6 +18,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..")))
 from keyeval_common import Tally, load_moments, moments_for, table  # noqa: E402
 
 
+def pair_major(k):
+    return k % 12 if k < 12 else (k % 12 + 3) % 12
+
+
+def decided_wrong(r, key):
+    if r is None or r["display"] < 0:
+        return False
+    if r["modeDecided"] and r["display"] != key:
+        return True
+    return bool(r["pairDecided"]) and pair_major(r["display"]) != pair_major(key)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--items", nargs="+", required=True)
@@ -28,6 +42,7 @@ def main():
         items += json.load(open(f))
     runs = [r.split("=", 1) for r in a.run]
     tallies = defaultdict(Tally)
+    wrong = defaultdict(int)
     for it in items:
         sets = [it["dataset"]]
         if a.by_singer and it["dataset"].startswith("rs200"):
@@ -46,15 +61,17 @@ def main():
             ms = (load_moments(a.skey_work, it["id"]) if a.skey_work else None) or moments_for(done["seconds"], it.get("final", False))
             for m in ms:
                 r = rows.get(m)
+                dw = decided_wrong(r, it["key"])
                 for s in sets:
                     tallies[(s, name)].add(-1 if r is None else r["display"], it["key"], it["id"])
+                    wrong[(s, name)] += dw
     sets = sorted({s for s, _ in tallies}, key=lambda s: (s.split("_d")[0].split(":")[0], s))
     out = []
     for s in sets:
         n = next((tallies[(s, nm)] for nm, _ in runs if tallies[(s, nm)].n), None)
         out.append([s, str(len(n.clips)) if n else "", str(n.n) if n else ""] +
-                   [f"{tallies[(s, nm)].exact:.1f} / {tallies[(s, nm)].rel:.1f}" if tallies[(s, nm)].n else "" for nm, _ in runs])
-    print(table(["set", "clips", "readings"] + [nm + " (exact / rel %)" for nm, _ in runs], out))
+                   [f"{tallies[(s, nm)].exact:.1f} / {tallies[(s, nm)].rel:.1f} / {wrong[(s, nm)]}" if tallies[(s, nm)].n else "" for nm, _ in runs])
+    print(table(["set", "clips", "readings"] + [nm + " (exact % / rel % / decided-wrong)" for nm, _ in runs], out))
 
 
 if __name__ == "__main__":

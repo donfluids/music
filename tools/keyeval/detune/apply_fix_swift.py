@@ -1,5 +1,5 @@
 """The Swift port of apply_fix.py, as edits to a SCRATCH COPY of ios/KeyCatchCore at 9ad92ca
-(never the real checkout): Level.steadyCents and KeyLevelTracker.settle, SingerModel.adopt, and
+(never the real checkout); 6e4dad9 has the same Swift sources: Level.steadyCents and KeyLevelTracker.settle, SingerModel.adopt, and
 the held level in MusicAnalyzer, line for line as in Kotlin.
 
 usage: python -I apply_fix_swift.py SCRATCH_KEYCATCHCORE_DIR
@@ -124,7 +124,10 @@ def main():
                 var away = (l.steadyCents - singer.offsetCents + 50.0).truncatingRemainder(dividingBy: 100.0)
                 if away < 0 { away += 100.0 }
                 away -= 50.0
-                if abs(away) >= 10.0 { singer.adopt(l.steadyCents) }
+                // Not to a level near the boundary between two keys: a level read just past 50 would
+                // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
+                // certain). The singer model's own grid crosses there only on its own evidence.
+                if abs(away) >= 10.0 && abs(l.steadyCents) <= 40.0 { singer.adopt(l.steadyCents) }
             }
 """)
     # The grid taken from the level makes the singer model's own scatter look tighter than the
@@ -140,6 +143,9 @@ def main():
 """, """        levelTracker.reset()
         heldLevel = nil
 """)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import test_edits
+    test_edits.apply(os.path.join(root, "Tests/KeyCatchCoreTests/SingerRobustnessTests.swift"), test_edits.SW_SUBS)
     print("fix applied:", root)
 
 
