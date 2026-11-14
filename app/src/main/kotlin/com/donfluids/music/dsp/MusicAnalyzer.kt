@@ -187,6 +187,8 @@ class MusicAnalyzer(
     private val singer = SingerModel()
     private val levelTracker = KeyLevelTracker()
     private var keyLevel: KeyLevelTracker.Level? = null
+    /** The key level, when the singers hold it steadily and the singer model's grid follows it. */
+    private var heldLevel: KeyLevelTracker.Level? = null
     private var nowShiftShown = 0
 
     /**
@@ -205,7 +207,7 @@ class MusicAnalyzer(
      * careless singer (a note-to-note change never exceeds half a semitone once wrapped); the
      * second overstates a careful one who wanders. Decisions lean to caution.
      */
-    private fun keySpreadCents(): Double = maxOf(keyLevel?.spreadCents ?: 0.0, singer.spreadCents)
+    private fun keySpreadCents(): Double = maxOf((keyLevel ?: heldLevel)?.spreadCents ?: 0.0, singer.spreadCents)
     private fun keySigma(): Double = (keySpreadCents() / 100.0).coerceIn(0.1, 0.35)
     private val segmenter = NoteSegmenter().also { seg -> seg.onNote = { singer.observe(it) } }
     private var keyFromMelody = false
@@ -317,6 +319,7 @@ class MusicAnalyzer(
         recentChroma.fill(0f)
         segmenter.reset()
         levelTracker.reset()
+        heldLevel = null
         keyLevel = null
         nowShiftShown = 0
         keyFromMelody = false
@@ -465,9 +468,34 @@ class MusicAnalyzer(
             // singers have actually wandered: most of a semitone across most of the singing, or
             // that far from the centre right now. A short, scattered clip can otherwise be read as
             // sitting halfway between two keys, and moving every note by that half flips them.
-            keyLevel = levelTracker.analyse(notes)?.takeIf { l ->
-                notes.size >= 16 && notes.sumOf { it.durationSeconds } >= 6.0 &&
-                    (l.highCents - l.lowCents >= 70.0 || kotlin.math.abs(l.nowCents - l.centreCents) >= 70.0)
+            val level = levelTracker.analyse(notes)
+            val enough = notes.size >= 16 && notes.sumOf { it.durationSeconds } >= 6.0
+            keyLevel = level?.takeIf { l ->
+                enough && (l.highCents - l.lowCents >= 70.0 || kotlin.math.abs(l.nowCents - l.centreCents) >= 70.0)
+            }
+            // Singers who stay put but sit well off the grid: a scattered singer's notes, one at a
+            // time, barely move the singer model (30 cents of scatter 39 cents sharp leaves it near
+            // 0, and a third of the notes then read a semitone high). The key level reads the whole
+            // tune against a scale and sees where they sit; the grid takes that.
+            // Only for singing that holds one level (most of it within 40 cents, and there now):
+            // a singer on the move is the singer model's to follow. And only for a singer scattering
+            // 25 cents or less around it: beyond that the notes say little about where in the
+            // semitone they sit, and a poor singer drifting flat was then shown a wrong key as
+            // certain (SingerRobustnessTest; 30 and 35 cents both failed it).
+            heldLevel = level?.takeIf { l ->
+                keyLevel == null && enough && l.spreadCents <= 25.0 &&
+                    l.highCents - l.lowCents <= 40.0 && kotlin.math.abs(l.nowCents - l.centreCents) <= 30.0
+            }
+            heldLevel?.let { l ->
+                val away = ((l.steadyCents - singer.offsetCents + 50.0).mod(100.0)) - 50.0
+                // Not to a level near the boundary between two keys: a level read just past 50 would
+                // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
+                // certain). The singer model's own grid crosses there only on its own evidence.
+                // Nor to a level within 20 cents of concert pitch: the level reads in-tune scattered
+                // singers up to about 20 cents off, and moving their grid that little only changed
+                // which wrong mode or pair they were shown as certain.
+                val steady = kotlin.math.abs(l.steadyCents)
+                if (kotlin.math.abs(away) >= 10.0 && steady >= 20.0 && steady <= 40.0) singer.adopt(l.steadyCents)
             }
             if (keyLevel == null) nowShiftShown = 0
             keyLevel?.let { l ->

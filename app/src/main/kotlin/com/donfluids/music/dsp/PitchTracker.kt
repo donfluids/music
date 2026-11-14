@@ -286,6 +286,25 @@ class SingerModel(private val memorySeconds: Double = 8.0) {
         currentCents = offsetCents + leanCents
     }
 
+    /**
+     * Moves the grid to [cents] from concert pitch: another estimate of where the singer sits,
+     * from the whole tune rather than the last few notes (see MusicAnalyzer). The remembered notes
+     * turn with it and the shown lean is kept, as when the grid moves on its own.
+     */
+    fun adopt(cents: Double) {
+        val step = ((cents - offsetCents + 50.0).mod(100.0)) - 50.0
+        offsetCents += step
+        leanCents -= step
+        val turn = -2 * PI * step / 100.0
+        val c = kotlin.math.cos(turn); val s = kotlin.math.sin(turn)
+        val nc = sumCos * c - sumSin * s
+        sumSin = sumCos * s + sumSin * c
+        sumCos = nc
+        if (offsetCents > 50.0) { offsetCents -= 100.0; relabelSemitones++ }
+        else if (offsetCents <= -50.0) { offsetCents += 100.0; relabelSemitones-- }
+        currentCents = offsetCents + leanCents
+    }
+
     fun reset() {
         offsetCents = 0.0; currentCents = 0.0; leanCents = 0.0; relabelSemitones = 0; sumCos = 0.0; sumSin = 0.0; sumWeight = 0.0; sumWeightSq = 0.0; lastUpdate = Double.NaN
         residuals.clear(); notesSeen = 0

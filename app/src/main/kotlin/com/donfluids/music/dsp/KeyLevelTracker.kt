@@ -69,6 +69,11 @@ class KeyLevelTracker(
         val move: Move,
         /** How far notes sat from the scale once the wandering is removed, in cents. */
         val spreadCents: Double,
+        /**
+         * Where singers who have not wandered sit within the semitone, in cents from concert pitch
+         * (-50 to 50): the centre, placed more finely than the curve's 10-cent steps.
+         */
+        val steadyCents: Double = 0.0,
     ) {
         /** Semitones from the centre's nearest key to where the singers are now. */
         val nowShift: Int get() = (nowCents / 100.0).roundToInt() - (centreCents / 100.0).roundToInt()
@@ -79,6 +84,7 @@ class KeyLevelTracker(
     private var cachedCount = -1
     private var cachedFirst: SungNote? = null
     private var cachedPath = DoubleArray(0)
+    private var cachedSettle = 0.0
     private var spreadForTemplate = 30.0
 
     /** Null until there are enough notes to place the scale. */
@@ -92,6 +98,7 @@ class KeyLevelTracker(
         // and reused until another note closes.
         if (use.size != cachedCount || use.first() != cachedFirst) {
             cachedPath = refine(use)
+            cachedSettle = settle(use, cachedPath)
             cachedCount = use.size
             cachedFirst = use.first()
         }
@@ -122,7 +129,8 @@ class KeyLevelTracker(
         val spread = maxOf(1.4826 * weightedPercentile(dists, weights, 0.5), floorSpread)
         spreadForTemplate = spread.coerceIn(15.0, 45.0)
 
-        return Level(moved, centre, now, low, high, classify(use, path), spread)
+        val steady = centre + cachedSettle
+        return Level(moved, centre, now, low, high, classify(use, path), spread, steady - 100.0 * Math.round(steady / 100.0))
     }
 
     private fun classify(notes: List<SungNote>, path: DoubleArray): Move {
@@ -195,6 +203,38 @@ class KeyLevelTracker(
         val octaves = 1200.0 * Math.floor((centre + 600.0) / 1200.0)
         for (i in path.indices) path[i] -= octaves
         return path
+    }
+
+    /**
+     * The curve moves in 10-cent steps, and for a scattered singer the decoding leans toward half
+     * a semitone, where notes between two scale steps cost least. Sitting 39 cents sharp then often
+     * reads as 50, the boundary between two keys. The notes' mean signed distance from the scale,
+     * along the curve, is how far to move a steady level to place it within a few cents. Notes far
+     * from every scale step (chromatic or careless) are left out of the mean.
+     */
+    private fun settle(notes: List<SungNote>, path: DoubleArray): Double {
+        val limit = 1.5 * maxOf(spreadForTemplate, floorSpread, 20.0)
+        var sw = 0.0; var sd = 0.0
+        for (i in notes.indices) {
+            val d = signedDistanceToScale(notes[i].concertPitch * 100.0, path[i])
+            if (abs(d) > limit) continue
+            val w = notes[i].durationSeconds.coerceIn(0.1, 1.5)
+            sw += w; sd += w * d
+        }
+        return if (sw > 0.0) sd / sw else 0.0
+    }
+
+    /** Like [distanceToScale], with the sign: positive when the note is above the nearest scale step. */
+    private fun signedDistanceToScale(cents: Double, tonicCents: Double): Double {
+        val rel = Math.floorMod(Math.round((cents - tonicCents) * 10).toInt(), 12000) / 10.0
+        var best = 600.0
+        for (deg in MAJOR_DEGREES) {
+            var d = rel - deg * 100.0
+            if (d > 600.0) d -= 1200.0
+            if (d < -600.0) d += 1200.0
+            if (abs(d) < abs(best)) best = d
+        }
+        return best
     }
 
     private fun addToProfile(profile: DoubleArray, cents: List<Double>, weights: List<Double>, sigma: Double) {
