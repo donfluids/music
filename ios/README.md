@@ -49,12 +49,36 @@ that touches `ios/`, it:
 - runs all the engine tests, Core ML included (the step fails if a Beat This! Core ML test did
   not run);
 - generates the project;
-- builds the app for the simulator and, unsigned, for iPhones.
+- builds the app for the simulator and, unsigned, for iPhones;
+- on the KeyCatch branch, puts that unsigned build as `KeyCatch.ipa` on the pre-release
+  `keycatch-ios-latest` (the repository's Releases page), replaced on every push.
 
 ## Putting it on an iPhone
 
-An iPhone only runs apps signed by Apple's tools. Every route needs an Apple Developer account,
-and without a Mac the practical route is TestFlight:
+An iPhone only runs apps signed for it with an Apple ID.
+
+### With a free Apple ID
+
+The IPA from the pre-release is unsigned, so a sideloading tool signs it with your Apple ID
+on a Windows PC or a Mac. These steps use Sideloadly; AltStore works the same way.
+
+1. Download `KeyCatch.ipa` from the `keycatch-ios-latest` pre-release.
+2. Install Sideloadly; its site says what Windows needs besides it.
+3. Connect the iPhone by cable and tap **Trust** on the phone.
+4. Drop the IPA into Sideloadly, enter the Apple ID and start. The password goes to Apple to
+   make the signing certificate; a separate Apple ID for this is fine.
+5. On the iPhone:
+   - Turn on **Settings → Privacy & Security → Developer Mode** and restart when asked.
+   - Trust your Apple ID under **Settings → General → VPN & Device Management**.
+6. Open KeyCatch and allow the microphone.
+
+Limits of a free Apple ID:
+- The app stops opening after 7 days. Sign it again from the computer.
+- At most three apps signed this way at a time.
+
+### With a paid Apple Developer account
+
+Without a Mac the practical route is TestFlight:
 
 1. Join the Apple Developer Program (paid, yearly).
 2. In App Store Connect:
