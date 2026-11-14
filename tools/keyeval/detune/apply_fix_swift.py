@@ -127,7 +127,11 @@ def main():
                 // Not to a level near the boundary between two keys: a level read just past 50 would
                 // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
                 // certain). The singer model's own grid crosses there only on its own evidence.
-                if abs(away) >= 10.0 && abs(l.steadyCents) <= 40.0 { singer.adopt(l.steadyCents) }
+                // Nor to a level within 20 cents of concert pitch: the level reads in-tune scattered
+                // singers up to about 20 cents off, and moving their grid that little only changed
+                // which wrong mode or pair they were shown as certain.
+                let steady = abs(l.steadyCents)
+                if abs(away) >= 10.0 && steady >= 20.0 && steady <= 40.0 { singer.adopt(l.steadyCents) }
             }
 """)
     # The grid taken from the level makes the singer model's own scatter look tighter than the

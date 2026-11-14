@@ -12,7 +12,8 @@ in ios/KeyCatchCore (PitchTracker.swift, KeyLevelTracker.swift, MusicAnalyzer.sw
      scatter no more than 25 cents around it, and its steady offset is 10 cents or more from the
      singer model's grid, the grid adopts it. Everything downstream (key notes, relabelling, the
      tuning shown) then follows. Not to a level more than 40 cents from concert pitch: one read
-     just past 50 would carry every note across the boundary.
+     just past 50 would carry every note across the boundary. Nor to one within 20 cents of it:
+     an in-tune scattered singer reads that far off.
   4. SingerRobustnessTest: a hymn sung 39 and 45 cents sharp is never sure of the key above.
 
 usage: python -I apply_fix.py SCRATCH_REPO
@@ -137,7 +138,11 @@ def main():
                 // Not to a level near the boundary between two keys: a level read just past 50 would
                 // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
                 // certain). The singer model's own grid crosses there only on its own evidence.
-                if (kotlin.math.abs(away) >= 10.0 && kotlin.math.abs(l.steadyCents) <= 40.0) singer.adopt(l.steadyCents)
+                // Nor to a level within 20 cents of concert pitch: the level reads in-tune scattered
+                // singers up to about 20 cents off, and moving their grid that little only changed
+                // which wrong mode or pair they were shown as certain.
+                val steady = kotlin.math.abs(l.steadyCents)
+                if (kotlin.math.abs(away) >= 10.0 && steady >= 20.0 && steady <= 40.0) singer.adopt(l.steadyCents)
             }
 """)
     # The grid taken from the level makes the singer model's own scatter look tighter than the
