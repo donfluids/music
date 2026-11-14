@@ -131,6 +131,8 @@ public final class MusicAnalyzer {
     private let singer = SingerModel()
     private let levelTracker = KeyLevelTracker()
     private var keyLevel: KeyLevelTracker.Level? = nil
+    /// The key level, when the singers hold it steadily and the singer model's grid follows it.
+    private var heldLevel: KeyLevelTracker.Level? = nil
     private var nowShiftShown = 0
 
     /// Sung notes for the key finders: moved back to the centre when the singers wander, and
@@ -148,7 +150,7 @@ public final class MusicAnalyzer {
     /// curve and the scatter around the plain semitone grid. The first can understate a very
     /// careless singer (a note-to-note change never exceeds half a semitone once wrapped); the
     /// second overstates a careful one who wanders. Decisions lean to caution.
-    private func keySpreadCents() -> Double { max(keyLevel?.spreadCents ?? 0.0, singer.spreadCents) }
+    private func keySpreadCents() -> Double { max((keyLevel ?? heldLevel)?.spreadCents ?? 0.0, singer.spreadCents) }
     private func keySigma() -> Double { (keySpreadCents() / 100.0).coerceIn(0.1, 0.35) }
     private let segmenter = NoteSegmenter()
     private var keyFromMelody = false
@@ -305,6 +307,7 @@ public final class MusicAnalyzer {
         recentChroma = [Float](repeating: 0, count: 12)
         segmenter.reset()
         levelTracker.reset()
+        heldLevel = nil
         keyLevel = nil
         nowShiftShown = 0
         keyFromMelody = false
@@ -447,9 +450,36 @@ public final class MusicAnalyzer {
             // singers have actually wandered: most of a semitone across most of the singing, or
             // that far from the centre right now. A short, scattered clip can otherwise be read as
             // sitting halfway between two keys, and moving every note by that half flips them.
-            keyLevel = levelTracker.analyse(notes).flatMap { l in
-                (notes.count >= 16 && notes.reduce(0.0, { $0 + $1.durationSeconds }) >= 6.0 &&
-                    (l.highCents - l.lowCents >= 70.0 || abs(l.nowCents - l.centreCents) >= 70.0)) ? l : nil
+            let level = levelTracker.analyse(notes)
+            let enough = notes.count >= 16 && notes.reduce(0.0, { $0 + $1.durationSeconds }) >= 6.0
+            keyLevel = level.flatMap { l in
+                (enough && (l.highCents - l.lowCents >= 70.0 || abs(l.nowCents - l.centreCents) >= 70.0)) ? l : nil
+            }
+            // Singers who stay put but sit well off the grid: a scattered singer's notes, one at a
+            // time, barely move the singer model (30 cents of scatter 39 cents sharp leaves it near
+            // 0, and a third of the notes then read a semitone high). The key level reads the whole
+            // tune against a scale and sees where they sit; the grid takes that.
+            // Only for singing that holds one level (most of it within 40 cents, and there now):
+            // a singer on the move is the singer model's to follow. And only for a singer scattering
+            // 25 cents or less around it: beyond that the notes say little about where in the
+            // semitone they sit, and a poor singer drifting flat was then shown a wrong key as
+            // certain (SingerRobustnessTest; 30 and 35 cents both failed it).
+            heldLevel = level.flatMap { l in
+                (keyLevel == nil && enough && l.spreadCents <= 25.0 &&
+                    l.highCents - l.lowCents <= 40.0 && abs(l.nowCents - l.centreCents) <= 30.0) ? l : nil
+            }
+            if let l = heldLevel {
+                var away = (l.steadyCents - singer.offsetCents + 50.0).truncatingRemainder(dividingBy: 100.0)
+                if away < 0 { away += 100.0 }
+                away -= 50.0
+                // Not to a level near the boundary between two keys: a level read just past 50 would
+                // carry every note across it (a hymn sung 45 cents sharp was then shown D flat as
+                // certain). The singer model's own grid crosses there only on its own evidence.
+                // Nor to a level within 20 cents of concert pitch: the level reads in-tune scattered
+                // singers up to about 20 cents off, and moving their grid that little only changed
+                // which wrong mode or pair they were shown as certain.
+                let steady = abs(l.steadyCents)
+                if abs(away) >= 10.0 && steady >= 20.0 && steady <= 40.0 { singer.adopt(l.steadyCents) }
             }
             if keyLevel == nil { nowShiftShown = 0 }
             if let l = keyLevel {

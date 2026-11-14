@@ -63,8 +63,12 @@ public final class KeyLevelTracker {
         public let move: Move
         /// How far notes sat from the scale once the wandering is removed, in cents.
         public let spreadCents: Double
+        /// Where singers who have not wandered sit within the semitone, in cents from concert pitch
+        /// (-50 to 50): the centre, placed more finely than the curve's 10-cent steps.
+        public let steadyCents: Double
 
-        public init(notes: [SungNote], centreCents: Double, nowCents: Double, lowCents: Double, highCents: Double, move: Move, spreadCents: Double) {
+        public init(notes: [SungNote], centreCents: Double, nowCents: Double, lowCents: Double, highCents: Double, move: Move, spreadCents: Double, steadyCents: Double = 0.0) {
+            self.steadyCents = steadyCents
             self.notes = notes
             self.centreCents = centreCents
             self.nowCents = nowCents
@@ -83,6 +87,7 @@ public final class KeyLevelTracker {
     private var cachedCount = -1
     private var cachedFirst: SungNote?
     private var cachedPath: [Double] = []
+    private var cachedSettle = 0.0
     private var spreadForTemplate = 30.0
 
     /// Nil until there are enough notes to place the scale.
@@ -96,6 +101,7 @@ public final class KeyLevelTracker {
         // and reused until another note closes.
         if use.count != cachedCount || use.first! != cachedFirst {
             cachedPath = refine(use)
+            cachedSettle = settle(use, cachedPath)
             cachedCount = use.count
             cachedFirst = use.first!
         }
@@ -126,7 +132,9 @@ public final class KeyLevelTracker {
         let spread = max(1.4826 * weightedPercentile(dists, weights, 0.5), floorSpread)
         spreadForTemplate = spread.coerceIn(15.0, 45.0)
 
-        return Level(notes: moved, centreCents: centre, nowCents: now, lowCents: low, highCents: high, move: classify(use, path), spreadCents: spread)
+        let steady = centre + cachedSettle
+        return Level(notes: moved, centreCents: centre, nowCents: now, lowCents: low, highCents: high, move: classify(use, path), spreadCents: spread,
+                     steadyCents: steady - 100.0 * Double(kotlinRound(steady / 100.0)))
     }
 
     private func classify(_ notes: [SungNote], _ path: [Double]) -> Move {
@@ -292,6 +300,36 @@ public final class KeyLevelTracker {
             let d = distanceToScale(cents, Double(s) * KeyLevelTracker.STEP)
             return w * log(exp(-d * d / (2 * sigma * sigma)) + KeyLevelTracker.OUT_OF_SCALE)
         }
+    }
+
+    /// The curve moves in 10-cent steps, and for a scattered singer the decoding leans toward half
+    /// a semitone, where notes between two scale steps cost least. Sitting 39 cents sharp then often
+    /// reads as 50, the boundary between two keys. The notes' mean signed distance from the scale,
+    /// along the curve, is how far to move a steady level to place it within a few cents. Notes far
+    /// from every scale step (chromatic or careless) are left out of the mean.
+    private func settle(_ notes: [SungNote], _ path: [Double]) -> Double {
+        let limit = 1.5 * max(spreadForTemplate, floorSpread, 20.0)
+        var sw = 0.0; var sd = 0.0
+        for i in notes.indices {
+            let d = signedDistanceToScale(notes[i].concertPitch * 100.0, path[i])
+            if abs(d) > limit { continue }
+            let w = notes[i].durationSeconds.coerceIn(0.1, 1.5)
+            sw += w; sd += w * d
+        }
+        return sw > 0.0 ? sd / sw : 0.0
+    }
+
+    /// Like `distanceToScale`, with the sign: positive when the note is above the nearest scale step.
+    private func signedDistanceToScale(_ cents: Double, _ tonicCents: Double) -> Double {
+        let rel = Double(floorMod(kotlinRound((cents - tonicCents) * 10), 12000)) / 10.0
+        var best = 600.0
+        for deg in KeyLevelTracker.MAJOR_DEGREES {
+            var d = rel - Double(deg) * 100.0
+            if d > 600.0 { d -= 1200.0 }
+            if d < -600.0 { d += 1200.0 }
+            if abs(d) < abs(best) { best = d }
+        }
+        return best
     }
 
     private func distanceToScale(_ cents: Double, _ tonicCents: Double) -> Double {
