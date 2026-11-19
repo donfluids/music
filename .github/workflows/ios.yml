@@ -8,6 +8,8 @@ name: iOS
 
 on:
   push:
+    # Branches only: version tags go to testflight.yml instead.
+    branches: ["**"]
     paths:
       - "ios/**"
       - ".github/workflows/ios.yml"
