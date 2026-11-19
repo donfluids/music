@@ -22,8 +22,11 @@ targets:
       path: KeyCatch/Info.plist
       properties:
         CFBundleDisplayName: KeyCatch
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        # Both come from the build settings below; the TestFlight workflow overrides them.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # The app uses no encryption of its own, so TestFlight does not ask about export rules.
+        ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.music
         NSMicrophoneUsageDescription: KeyCatch listens to the music to find its key, chords and tempo. The sound is analysed on this iPhone and is not sent anywhere.
         UIAppFonts:
@@ -37,6 +40,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.donfluids.keycatch
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"

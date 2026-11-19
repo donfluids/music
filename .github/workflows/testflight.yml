@@ -1,0 +1,101 @@
+# Sends KeyCatch for iPhone to TestFlight when a tag like ios-v0.1.0 is pushed.
+# The version comes from the tag; the build number from this workflow's run number and attempt.
+# Signing is cloud-managed: one App Store Connect API key (Admin role) lets Xcode create the
+# certificate and profile and upload the build. The four secrets are listed in ios/README.md.
+name: TestFlight
+
+on:
+  push:
+    tags:
+      - "ios-v*"
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the secrets and the tag
+        run: |
+          missing=""
+          for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY TEAM_ID; do
+            test -n "${!v}" || missing="$missing $v"
+          done
+          test -z "$missing" || { echo "::error::Missing secrets:$missing (see ios/README.md, TestFlight)"; exit 1; }
+          VERSION="${GITHUB_REF_NAME#ios-v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] \
+            || { echo "::error::Tag $GITHUB_REF_NAME is not ios-v<major>.<minor>[.<patch>]"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Write the API key
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s\n' "$ASC_KEY" > "$KEY_PATH"
+          grep -q "BEGIN PRIVATE KEY" "$KEY_PATH" \
+            || { echo "::error::APP_STORE_CONNECT_KEY must be the whole .p8 file, BEGIN and END lines included"; exit 1; }
+          echo "KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      # On failure only the error lines are shown; the full log is thousands of lines.
+      - name: Archive
+        working-directory: ios
+        run: |
+          echo "KeyCatch $VERSION ($BUILD)"
+          xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/KeyCatch.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
+            archive > ../archive.log 2>&1 \
+            || { grep -E "error:|ARCHIVE FAILED" ../archive.log | sort -u | head -100; exit 1; }
+
+      - name: Sign and upload to App Store Connect
+        working-directory: ios
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive -archivePath build/KeyCatch.xcarchive \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" > ../export.log 2>&1 \
+            || { grep -iE "error|failed" ../export.log | sort -u | head -100; exit 1; }
+          grep -iE "upload|succeeded|EXPORT SUCCEEDED" ../export.log | tail -5
+          echo "Uploaded KeyCatch $VERSION ($BUILD). Apple takes a few minutes to process it before it shows in TestFlight."
+
+      - name: Remove the API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8

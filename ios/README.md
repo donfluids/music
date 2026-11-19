@@ -76,21 +76,44 @@ Limits of a free Apple ID:
 - The app stops opening after 7 days. Sign it again from the computer.
 - At most three apps signed this way at a time.
 
-### With a paid Apple Developer account
+### TestFlight, with a paid Apple Developer account
 
-Without a Mac the practical route is TestFlight:
+`.github/workflows/testflight.yml` signs the app and uploads it to TestFlight whenever a tag
+like `ios-v0.1.0` is pushed. The version shown in TestFlight comes from the tag; the build
+number comes from the workflow's run number. Signing is cloud-managed: Xcode creates the
+distribution certificate and profile with the API key, so no certificate file is needed.
 
-1. Join the Apple Developer Program (paid, yearly).
-2. In App Store Connect:
-   - Create the app with the bundle ID `com.donfluids.keycatch`.
-   - Make an App Store Connect API key.
-3. Add the key and a signing certificate to the repository's GitHub secrets. A release job in
-   the workflow can then sign the build and upload it to TestFlight.
-4. Install the TestFlight app on the iPhone and accept the invitation.
+Once, on Apple's side:
 
-The other route is a rented cloud Mac, such as MacinCloud or an AWS Mac instance. There, Xcode
-can install the app straight onto a phone connected to it, or upload it to TestFlight the same
-way.
+1. In the developer site (Certificates, Identifiers & Profiles → Identifiers), register an App
+   ID with the bundle ID `com.donfluids.keycatch`. No capabilities are needed.
+2. In App Store Connect → Apps → **+** → New App: platform iOS, the bundle ID above, any SKU.
+   The name must be unique on the App Store; if KeyCatch is taken, pick another there. The name
+   under the icon stays KeyCatch.
+3. In App Store Connect → Users and Access → Integrations → App Store Connect API, make a team
+   key with the **Admin** role (cloud-managed signing needs it). Download the `.p8` file; Apple
+   offers it only once. Note the key ID and the issuer ID shown on that page.
+4. Your team ID is under Membership details in the developer account.
+
+Once, in GitHub (Settings → Secrets and variables → Actions → New repository secret):
+
+| Secret | Value |
+| --- | --- |
+| `APP_STORE_CONNECT_KEY_ID` | The key ID |
+| `APP_STORE_CONNECT_ISSUER_ID` | The issuer ID |
+| `APP_STORE_CONNECT_KEY` | The whole `.p8` file, BEGIN and END lines included |
+| `APPLE_TEAM_ID` | The team ID |
+
+Each release:
+
+1. Push a tag: `git tag ios-v0.1.0 && git push origin ios-v0.1.0`. Use a new version for each
+   release you want to keep apart; builds of the same version are numbered.
+2. When the workflow is green, Apple processes the build for a few minutes.
+3. In App Store Connect → the app → TestFlight, add yourself to an internal testing group.
+   Install the TestFlight app on the iPhone and accept the invitation.
+
+A TestFlight build works for 90 days. If the Archive step says the team has no devices, register
+the iPhone under Devices in the developer site and run the workflow again.
 
 ## Not the same as Android
 
