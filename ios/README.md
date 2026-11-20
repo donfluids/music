@@ -83,19 +83,24 @@ like `ios-v0.1.0` is pushed. The version shown in TestFlight comes from the tag;
 number comes from the workflow's run number. Signing is cloud-managed: Xcode creates the
 distribution certificate and profile with the API key, so no certificate file is needed.
 
+KeyCatch is published by Rivers Research LLC, on the same developer account as the Bible apps
+(`donfluids/Bible`, `docs/ios/app-store.md`). That account's API key and team ID work here too.
+
 Once, on Apple's side:
 
 1. In the developer site (Certificates, Identifiers & Profiles → Identifiers), register an App
-   ID with the bundle ID `com.donfluids.keycatch`. No capabilities are needed.
+   ID with the bundle ID `org.riversresearch.keycatch`. No capabilities are needed.
 2. In App Store Connect → Apps → **+** → New App: platform iOS, the bundle ID above, any SKU.
    The name must be unique on the App Store; if KeyCatch is taken, pick another there. The name
    under the icon stays KeyCatch.
-3. In App Store Connect → Users and Access → Integrations → App Store Connect API, make a team
-   key with the **Admin** role (cloud-managed signing needs it). Download the `.p8` file; Apple
+3. Use the Admin API key the Bible apps upload with, or make one: App Store Connect → Users and
+   Access → Integrations → App Store Connect API, a team key with the **Admin** role (cloud-managed signing needs it). Download the `.p8` file; Apple
    offers it only once. Note the key ID and the issuer ID shown on that page.
 4. Your team ID is under Membership details in the developer account.
 
-Once, in GitHub (Settings → Secrets and variables → Actions → New repository secret):
+Once, in this repository on GitHub (Settings → Secrets and variables → Actions → New repository
+secret). Secrets belong to one repository, so they are added here even if the Bible repository
+already has them:
 
 | Secret | Value |
 | --- | --- |
@@ -112,8 +117,9 @@ Each release:
 3. In App Store Connect → the app → TestFlight, add yourself to an internal testing group.
    Install the TestFlight app on the iPhone and accept the invitation.
 
-A TestFlight build works for 90 days. If the Archive step says the team has no devices, register
-the iPhone under Devices in the developer site and run the workflow again.
+A TestFlight build works for 90 days. Testers outside your team, and the App Store itself, also
+need a privacy policy address in App Store Connect; the Bible apps use a page on
+riversresearch.org, and KeyCatch needs its own there (the app sends nothing off the phone).
 
 ## Not the same as Android
 

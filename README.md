@@ -1,7 +1,8 @@
 # KeyCatch
 
 The app was called LiveKey during development. The Kotlin package (`com.donfluids.music`)
-and some code names still carry the old name; the app ID is `com.donfluids.keycatch`.
+and some code names still carry the old name; the app ID is `org.riversresearch.keycatch` on
+Android and iPhone. KeyCatch is published by Rivers Research LLC. © 2026 Rivers Research.
 
 An Android app for the keyboard player who has to join a song that has already started.
 Point the phone at the singing and it reports:
@@ -133,7 +134,7 @@ project directly; from a terminal:
 ```
 
 Install release builds on phones. A debug build (`assembleDebug`) is debuggable, uses the
-application id `com.donfluids.music.debug`, and lets anyone with a USB cable read its private
+application id `org.riversresearch.keycatch.debug`, and lets anyone with a USB cable read its private
 files, which defeats the clip privacy described above. Release builds are signed with the key
 in `keystore.properties`, which is ignored by git; without that file the release APK is unsigned.
 
