@@ -156,6 +156,7 @@
     <string name="limits_note_tuning">If your band tunes to something other than A = 440, set it in Settings so \"in tune\" means what you expect.</string>
     <string name="limits_note_new">KeyCatch is new, and we haven\'t tried it in every kind of room or with every kind of band yet.</string>
     <string name="limits_closing">When it matters, trust your ears. If something looks off, press New song to start fresh.</string>
+    <string name="limits_publisher">KeyCatch is published by Rivers Research. © 2026 Rivers Research.</string>
     <string name="limits_thanks_heading">Thanks</string>
     <string name="limits_thanks">KeyCatch listens with three open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT License), Basic Pitch, by Spotify\'s Audio Intelligence Lab (Apache 2.0), and Beat This!, by Francesco Foscarin, Jan Schlüter and Gerhard Widmer (MIT License). Text is set in Manrope (SIL Open Font License), and the icons are Google\'s Material Symbols (Apache 2.0). Their licenses ship with the app.</string>
     <string name="limits_privacy">Everything happens on your phone. No audio leaves it unless you choose to share a recorded clip yourself.</string>

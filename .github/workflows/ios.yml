@@ -89,7 +89,7 @@ jobs:
           for s in 0-idle 0-idle-band 1-voices-settled 2-voices-wandering 3-voices-early 4-band \
                    5-voices-settled-dark 6-voices-tapping 7-voices-do-re-mi-442 8-settings 9-history \
                    12-what-to-expect 13-band-details; do
-            xcrun simctl launch --terminate-running-process "$UDID" com.donfluids.keycatch -screenshot "$s" > /dev/null
+            xcrun simctl launch --terminate-running-process "$UDID" org.riversresearch.keycatch -screenshot "$s" > /dev/null
             sleep 5
             xcrun simctl io "$UDID" screenshot "../shots/$s.png" > /dev/null 2>&1
           done

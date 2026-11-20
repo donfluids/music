@@ -156,6 +156,7 @@ enum S {
     static let limitsNoteTuning = "If your band tunes to something other than A = 440, set it in Settings so \"in tune\" means what you expect."
     static let limitsNoteNew = "KeyCatch is new, and we haven't tried it in every kind of room or with every kind of band yet."
     static let limitsClosing = "When it matters, trust your ears. If something looks off, press New song to start fresh."
+    static let limitsPublisher = "KeyCatch is published by Rivers Research. © 2026 Rivers Research."
     static let limitsThanksHeading = "Thanks"
     static let limitsThanks = "KeyCatch listens with three open research models: CREPE, by Jong Wook Kim, Justin Salamon, Peter Li and Juan Pablo Bello (MIT License), Basic Pitch, by Spotify's Audio Intelligence Lab (Apache 2.0), and Beat This!, by Francesco Foscarin, Jan Schlüter and Gerhard Widmer (MIT License). All three run on your iPhone through Core ML. Text is set in Manrope (SIL Open Font License). Their licenses ship with the app."
     static let limitsPrivacy = "Everything happens on your phone. No audio leaves it unless you choose to share a recorded clip yourself."

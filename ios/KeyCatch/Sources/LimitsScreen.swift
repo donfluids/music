@@ -30,6 +30,7 @@ struct LimitsScreen: View {
                 Text(S.limitsPrivacy).font(AppFont.bodyMedium).foregroundStyle(p.onSurfaceVariant)
                 Heading(S.limitsThanksHeading)
                 Text(S.limitsThanks).font(AppFont.bodyMedium).foregroundStyle(p.onSurfaceVariant)
+                Text(S.limitsPublisher).font(AppFont.bodyMedium).foregroundStyle(p.onSurfaceVariant)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)

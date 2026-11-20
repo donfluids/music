@@ -1,7 +1,8 @@
 # Sends KeyCatch for iPhone to TestFlight when a tag like ios-v0.1.0 is pushed.
 # The version comes from the tag; the build number from this workflow's run number and attempt.
-# Signing is cloud-managed: one App Store Connect API key (Admin role) lets Xcode create the
-# certificate and profile and upload the build. The four secrets are listed in ios/README.md.
+# Signing is cloud-managed, as in the Bible app: one App Store Connect API key (Admin role) lets
+# Xcode create the certificate and profile and upload the build. The four secrets are listed in
+# ios/README.md; the Bible repository uses the same names and the same values work.
 name: TestFlight
 
 on:
@@ -47,14 +48,36 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
+      # As in the Bible app's workflow: the secret may hold the .p8 file as it is, with its line
+      # breaks lost or written as \n, only the part between BEGIN and END, or base64 of the file.
+      # It is rebuilt into the form Xcode reads and checked; nothing of it is printed.
       - name: Write the API key
         run: |
+          umask 077
           KEY_PATH="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
-          printf '%s\n' "$ASC_KEY" > "$KEY_PATH"
-          grep -q "BEGIN PRIVATE KEY" "$KEY_PATH" \
-            || { echo "::error::APP_STORE_CONNECT_KEY must be the whole .p8 file, BEGIN and END lines included"; exit 1; }
+          python3 - "$KEY_PATH" <<'PY'
+          import base64, os, re, sys
+          raw = os.environ["ASC_KEY"].replace("\\n", "\n").replace("\r", "")
+          if "BEGIN PRIVATE KEY" not in raw:
+              try:
+                  decoded = base64.b64decode(re.sub(r"\s+", "", raw), validate=True).decode("ascii")
+              except Exception:
+                  decoded = ""
+              if "BEGIN PRIVATE KEY" in decoded:
+                  raw = decoded
+          m = re.search(r"-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----", raw, re.S)
+          body = re.sub(r"\s+", "", m.group(1) if m else raw)
+          if not re.fullmatch(r"[A-Za-z0-9+/]+=*", body or "!"):
+              sys.exit("APP_STORE_CONNECT_KEY does not look like a .p8 key: paste the whole file, BEGIN and END lines included")
+          lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+          open(sys.argv[1], "w").write("-----BEGIN PRIVATE KEY-----\n" + "\n".join(lines) + "\n-----END PRIVATE KEY-----\n")
+          PY
+          openssl pkey -in "$KEY_PATH" -noout 2>/dev/null \
+            || { rm -f "$KEY_PATH"; echo "::error::APP_STORE_CONNECT_KEY is not a readable private key"; exit 1; }
           echo "KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
 
+      # Unsigned here: automatic signing at this step would make a development profile, which
+      # needs a registered device. The upload step signs for the App Store, which needs none.
       # On failure only the error lines are shown; the full log is thousands of lines.
       - name: Archive
         working-directory: ios
@@ -62,13 +85,12 @@ jobs:
           echo "KeyCatch $VERSION ($BUILD)"
           xcodebuild -project KeyCatch.xcodeproj -scheme KeyCatch -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/KeyCatch.xcarchive \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
             archive > ../archive.log 2>&1 \
-            || { grep -E "error:|ARCHIVE FAILED" ../archive.log | sort -u | head -100; exit 1; }
+            || { grep -E -A 6 "error:|ARCHIVE FAILED" ../archive.log | head -100; exit 1; }
+          grep -E "ARCHIVE SUCCEEDED" ../archive.log
 
       - name: Sign and upload to App Store Connect
         working-directory: ios
