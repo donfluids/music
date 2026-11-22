@@ -78,9 +78,10 @@ Limits of a free Apple ID:
 
 ### TestFlight, with a paid Apple Developer account
 
-`.github/workflows/testflight.yml` signs the app and uploads it to TestFlight whenever a tag
-like `ios-v0.1.0` is pushed. The version shown in TestFlight comes from the tag; the build
-number comes from the workflow's run number. Signing is cloud-managed: Xcode creates the
+`.github/workflows/testflight.yml` signs the app and uploads it to TestFlight whenever a push
+to the KeyCatch branch changes `.github/testflight.txt`, as in the Bible app. The file's first
+word is the version shown in TestFlight; the build number comes from the workflow's run number.
+Other pushes never upload. Signing is cloud-managed: Xcode creates the
 distribution certificate and profile with the API key, so no certificate file is needed.
 
 KeyCatch is published by Rivers Research LLC, on the same developer account as the Bible apps
@@ -111,8 +112,9 @@ already has them:
 
 Each release:
 
-1. Push a tag: `git tag ios-v0.1.0 && git push origin ios-v0.1.0`. Use a new version for each
-   release you want to keep apart; builds of the same version are numbered.
+1. Change `.github/testflight.txt` on the KeyCatch branch and push: a new version (such as
+   `0.2.0`) for a new release, or the same version with a note after it for another build of
+   it. Builds of one version are numbered.
 2. When the workflow is green, Apple processes the build for a few minutes.
 3. In App Store Connect → the app → TestFlight, add yourself to an internal testing group.
    Install the TestFlight app on the iPhone and accept the invitation.
