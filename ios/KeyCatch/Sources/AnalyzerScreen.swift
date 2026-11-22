@@ -92,13 +92,11 @@ struct AnalyzerScreen: View {
         .safeAreaInset(edge: .bottom) { BottomBar(sh: sh) }
         .navigationTitle("KeyCatch")
         .navigationBarTitleDisplayMode(.inline)
+        // The name sits on the left, as on Android (AppTitleItem); the navigation title is kept
+        // only so the back button on the other screens reads "KeyCatch".
+        .modifier(AppTitleItem(color: p.onBackground))
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Text(verbatim: "KeyCatch").font(AppFont.titleLarge).foregroundStyle(p.onBackground)
-            }
-            // The name sits on the left, as on Android; the navigation title is kept only so the
-            // back button on the other screens reads "KeyCatch". An empty view here is dropped,
-            // so a blank one stands in for the centred title.
+            // An empty view here is dropped, so a blank one stands in for the centred title.
             ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // Before the first Listen the start screen offers the modes itself.
@@ -888,4 +886,27 @@ struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController { UIActivityViewController(activityItems: items, applicationActivities: nil) }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// The app's name at the top left. From iOS 26 the bar puts each item in a round glass button,
+/// which cut the name to "K…"; there the name stands on the bar without one, at its full width.
+private struct AppTitleItem: ViewModifier {
+    let color: Color
+
+    private var title: some View {
+        Text(verbatim: "KeyCatch").font(AppFont.titleLarge).foregroundStyle(color)
+            .lineLimit(1).fixedSize()
+    }
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.toolbar {
+                ToolbarItem(placement: .topBarLeading) { title }.sharedBackgroundVisibility(.hidden)
+            }
+        } else {
+            content.toolbar {
+                ToolbarItem(placement: .topBarLeading) { title }
+            }
+        }
+    }
 }
