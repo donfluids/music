@@ -8,7 +8,7 @@ name: iOS
 
 on:
   push:
-    # Branches only: version tags go to testflight.yml instead.
+    # Branches only, so tags never run it. TestFlight uploads are testflight.yml.
     branches: ["**"]
     paths:
       - "ios/**"
