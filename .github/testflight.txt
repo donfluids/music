@@ -1,1 +1,1 @@
-0.1.0 first TestFlight build, published by Rivers Research (Xcode 26)
+0.1.0 full app name at the top left on iOS 26
