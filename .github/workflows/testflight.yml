@@ -40,6 +40,15 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BUILD=${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
+      # App Store Connect takes only builds made with the iOS 26 SDK or later (Xcode 26), and
+      # the runner's default Xcode is older. The newest installed Xcode 26 is used, as in the
+      # Bible app's workflow.
+      - name: Select Xcode 26
+        run: |
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          test -n "$xcode" || { echo "::error::no Xcode 26 on this runner"; ls -d /Applications/Xcode*.app; exit 1; }
+          sudo xcode-select -s "$xcode"
+
       - name: Show Xcode
         run: xcodebuild -version
 
