@@ -1,1 +1,1 @@
-0.1.0 first TestFlight build, published by Rivers Research
+0.1.0 first TestFlight build, published by Rivers Research (Xcode 26)
